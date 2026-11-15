@@ -1,0 +1,3070 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AgentForge — build an agent team by talking</title>
+<style>
+  /* AgentForge — a dispatch console.
+     Reading surface (left) and operational surface (right) are deliberately
+     different: a serif conversation column, a grotesque operations column.
+     Colour is reserved for state, so green and red always mean something. */
+  :root {
+    --paper:#F8F5EF; --surface:#FFFDFA; --sunk:#F0EBE2;
+    --ink:#241F1A; --ink-soft:#4A423A; --muted:#7B7065; --faint:#A89D90;
+    --rule:#E8E1D6; --rule-strong:#D6CCBD;
+    --running:#4E7A5E; --pending:#A9772B; --fault:#A8484A; --quiet:#A89D90;
+    --accent:#3E6B7A;
+    --radius:14px; --radius-sm:10px;
+    /* one 4px scale, so no spacing is eyeballed */
+    --s1:4px; --s2:8px; --s3:12px; --s4:18px; --s5:26px; --s6:36px;
+    --measure:68ch;
+    --lift:0 1px 2px rgba(62,48,32,.05), 0 6px 18px rgba(62,48,32,.05);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --mono: "Cascadia Mono", "SF Mono", "Consolas", ui-monospace, monospace;
+    --pad:18px;
+  }
+  /* The dark values live in one place and are applied either by the system
+     preference or by an explicit choice on <html data-theme>. Duplicating the
+     block would mean two sets of values drifting apart. */
+  :root[data-theme="dark"] {
+    --paper:#1A1714; --surface:#221E1A; --sunk:#141210;
+    --ink:#F0EBE3; --ink-soft:#CFC5B8; --muted:#9A8F82; --faint:#73695F;
+    --rule:#312B25; --rule-strong:#473F37;
+    --running:#7FB88F; --pending:#D6A75C; --fault:#DE8784; --quiet:#73695F;
+    --accent:#8FBCCB;
+      --lift:0 1px 2px rgba(0,0,0,.25), 0 6px 18px rgba(0,0,0,.2);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#1A1714; --surface:#221E1A; --sunk:#141210;
+      --ink:#F0EBE3; --ink-soft:#CFC5B8; --muted:#9A8F82; --faint:#73695F;
+      --rule:#312B25; --rule-strong:#473F37;
+      --running:#7FB88F; --pending:#D6A75C; --fault:#DE8784; --quiet:#73695F;
+      --accent:#8FBCCB;
+      --lift:0 1px 2px rgba(0,0,0,.25), 0 6px 18px rgba(0,0,0,.2);
+    }
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--paper); color:var(--ink);
+    font:15px/1.58 var(--sans);
+    -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column;
+  }
+  /* The shell is a rail beside the work, not above it: the account controls
+     are the only thing in the rail, so it stays narrow and quiet. */
+  .shell { flex:1; display:flex; min-height:0; }
+
+  .rail {
+    flex:none; width:56px; background:var(--surface);
+    border-right:1px solid var(--rule);
+    display:flex; flex-direction:column; align-items:center;
+    padding:var(--s3) 0; gap:var(--s2);
+  }
+  .rail .spacer { flex:1; }
+  .rail button {
+    width:38px; height:38px; border-radius:var(--radius-sm);
+    background:none; border:1px solid transparent; cursor:pointer;
+    color:var(--muted); display:flex; align-items:center;
+    justify-content:center; transition:background .15s, color .15s,
+    border-color .15s;
+  }
+  .rail button:hover { background:var(--sunk); color:var(--ink); }
+  .rail button[aria-expanded="true"] {
+    background:var(--sunk); color:var(--ink); border-color:var(--rule-strong);
+  }
+  .rail .initial {
+    font-size:13px; font-weight:600; letter-spacing:.02em; color:var(--ink);
+  }
+
+  /* Popovers: the account menu and the attach menu share one look. */
+  .pop {
+    position:fixed; z-index:40; min-width:216px;
+    background:var(--surface); border:1px solid var(--rule-strong);
+    border-radius:var(--radius); box-shadow:var(--lift);
+    padding:var(--s2); font-size:13px;
+  }
+  .pop[hidden] { display:none; }
+  .pop .who {
+    padding:var(--s2) var(--s3) var(--s3); border-bottom:1px solid var(--rule);
+    margin-bottom:var(--s2);
+  }
+  .pop .who b { display:block; font-size:13.5px; color:var(--ink); }
+  .pop .who span { font-size:11.5px; color:var(--faint); }
+  .pop button.row {
+    display:flex; align-items:center; gap:var(--s2); width:100%;
+    background:none; border:0; text-align:left; cursor:pointer;
+    padding:7px var(--s3); border-radius:var(--radius-sm); color:var(--ink);
+    font:inherit; font-size:13px;
+  }
+  .pop button.row:hover { background:var(--sunk); }
+  .pop button.row.danger-row { color:var(--fault); border:0; margin:0;
+                               padding:7px var(--s3); }
+  .pop .sep { height:1px; background:var(--rule); margin:var(--s2) 0; }
+  .pop .label {
+    font-size:11px; color:var(--faint); padding:0 var(--s3) var(--s1);
+  }
+  /* A three-way theme choice, because "system" is a real preference. */
+  .seg { display:flex; gap:2px; padding:0 var(--s2) var(--s1); }
+  .seg button {
+    flex:1; font:inherit; font-size:12px; cursor:pointer; padding:5px 0;
+    background:none; color:var(--muted); border:1px solid var(--rule);
+    border-radius:var(--radius-sm);
+  }
+  .seg button[aria-pressed="true"] {
+    background:var(--sunk); color:var(--ink); border-color:var(--rule-strong);
+  }
+  .acct-list button.row span.u { flex:1; }
+  .acct-list button.row span.m { font-size:11px; color:var(--faint); }
+
+  /* One attach button in the composer, offering files or a whole folder. */
+  .attach { background:none; border:1px solid var(--rule); color:var(--muted);
+            border-radius:var(--radius-sm); padding:0 10px; cursor:pointer;
+            display:flex; align-items:center; transition:color .15s,
+            border-color .15s, background .15s; }
+  .attach:hover { color:var(--ink); border-color:var(--rule-strong); }
+  .attach[aria-expanded="true"] { color:var(--accent);
+                                  border-color:var(--accent); }
+  button, input, textarea, select { font:inherit; color:inherit; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  /* ---------- top bar ---------- */
+  header {
+    flex:none; display:flex; align-items:center; gap:14px;
+    padding:0 var(--pad); height:52px;
+    background:var(--surface); border-bottom:1px solid var(--rule);
+  }
+  header h1 {
+    margin:0; font-size:15px; font-weight:600; letter-spacing:-0.01em;
+  }
+  .pill {
+    display:inline-flex; align-items:center; gap:7px;
+    font-size:12.5px; color:var(--muted);
+  }
+  .pill + .pill { margin-left:4px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--quiet); flex:none; }
+  .dot.ok { background:var(--running); }
+  .dot.bad { background:var(--fault); }
+  .tabs { margin-left:auto; display:flex; align-items:center; gap:2px; }
+  .tabs button {
+    background:none; border:0; border-radius:999px; cursor:pointer;
+    padding:6px 12px; font-size:13.5px; color:var(--muted);
+  }
+  .tabs button:hover { background:var(--sunk); color:var(--ink); }
+  .tabs button.on { background:var(--sunk); color:var(--ink); font-weight:550; }
+  .tabs .pill { margin-left:12px; padding-left:12px; border-left:1px solid var(--rule); }
+  #whoami { font-size:12.5px; color:var(--ink-soft); }
+  #signout { background:none; border:0; padding:0 0 0 8px; font-size:12.5px;
+             color:var(--muted); cursor:pointer; text-decoration:underline;
+             text-underline-offset:2px; }
+  #signout:hover { color:var(--ink); }
+
+  /* ---------- two surfaces ---------- */
+  main {
+    flex:1; display:grid;
+    /* --split is set by the drag handle and restored from localStorage */
+    grid-template-columns:minmax(0,var(--split,1.6fr)) 1px minmax(0,1fr);
+    min-height:0; background:var(--paper); gap:0;
+  }
+  /* The divider is the only chrome between the two panes: a hairline that
+     happens to be grabbable, not a visible scrollbar-like control. */
+  .divider {
+    background:var(--rule); cursor:col-resize; position:relative;
+  }
+  .divider::before {
+    content:""; position:absolute; inset:0 -4px;   /* a forgiving hit area */
+  }
+  .divider:hover, .divider.dragging { background:var(--accent); }
+  main.dragging { user-select:none; }
+
+  /* A visible focus ring on everything, never removed. */
+  :is(button, a, input, textarea, select, [tabindex]):focus-visible {
+    outline:2px solid var(--accent); outline-offset:2px; border-radius:4px;
+  }
+  section { background:var(--paper); display:flex; flex-direction:column; min-height:0; }
+  section:last-child { background:var(--surface); }
+  .shead {
+    flex:none; display:flex; align-items:baseline; gap:10px;
+    padding:14px var(--pad) 10px; font-size:13.5px; font-weight:550;
+    color:var(--ink); border-bottom:1px solid var(--rule);
+  }
+  .shead .tag { margin-left:auto; }
+  .scroll { flex:1; overflow-y:auto; padding:var(--pad); min-height:0; }
+
+  /* ---------- conversation ---------- */
+  .msg { display:flex; gap:14px; margin-bottom:18px; }
+  .msg .who {
+    flex:none; width:62px; padding-top:2px; text-align:right;
+    font-size:12px; color:var(--faint);
+  }
+  .msg .body {
+    flex:1; min-width:0; max-width:62ch; white-space:pre-wrap;
+    font:16.5px/1.68 var(--serif); color:var(--ink-soft);
+  }
+  .msg.me .body {
+    font-family:var(--sans); font-size:14.5px; line-height:1.55;
+    color:var(--ink); background:var(--sunk);
+    border-radius:var(--radius); padding:10px 15px;
+  }
+
+  /* ---------- composer ---------- */
+  form.composer {
+    flex:none; display:flex; gap:9px; align-items:flex-end;
+    padding:12px var(--pad); border-top:1px solid var(--rule);
+    background:var(--surface);
+  }
+  textarea {
+    flex:1; resize:none; min-height:42px; max-height:150px; padding:10px 12px;
+    background:var(--paper); border:1px solid var(--rule-strong); border-radius:9px;
+  }
+  textarea::placeholder { color:var(--faint); }
+  textarea:focus { border-color:var(--accent); outline:none; }
+  button.primary {
+    background:var(--ink); color:var(--surface); border:0; border-radius:var(--radius);
+    padding:12px 20px; font-weight:550; cursor:pointer;
+  }
+  button.primary:hover:not(:disabled) { opacity:.88; }
+  button.primary:disabled { opacity:.35; cursor:not-allowed; }
+  button.ghost {
+    background:none; border:1px solid var(--rule-strong); border-radius:var(--radius);
+    padding:9px 16px; font-size:13.5px; cursor:pointer; color:var(--ink-soft);
+  }
+  button.ghost:hover { border-color:var(--ink); color:var(--ink); }
+
+  /* ---------- footers ---------- */
+  .bar {
+    flex:none; display:flex; align-items:center; gap:10px;
+    padding:11px var(--pad); border-top:1px solid var(--rule);
+    background:var(--surface);
+  }
+  .bar .grow { flex:1; font-size:13px; color:var(--muted); }
+  select {
+    background:var(--paper); border:1px solid var(--rule-strong);
+    border-radius:var(--radius-sm); padding:8px 12px; font-size:13.5px;
+  }
+
+  /* ---------- requirements ---------- */
+  .slots { margin-bottom:22px; }
+  .slots h3 {
+    margin:0 0 10px; font-size:13px; font-weight:550; color:var(--ink);
+  }
+  .slot {
+    display:flex; gap:10px; align-items:baseline;
+    padding:5px 0; border-bottom:1px solid var(--rule); font-size:13.5px;
+  }
+  .slot:last-child { border-bottom:0; }
+  .slot .mark { flex:none; width:12px; color:var(--faint); }
+  .slot .nm { flex:none; width:86px; color:var(--muted); }
+  .slot .val { color:var(--ink-soft); }
+  .slot.done .mark { color:var(--running); }
+  .slot.todo .val { color:var(--faint); }
+
+  /* ---------- the team, as an org list on a spine ---------- */
+  .card {
+    position:relative; padding:11px 0 11px 16px; margin:0;
+    border-left:2px solid var(--rule-strong);
+  }
+  .card + .card { border-top:1px solid var(--rule); }
+  .card.sup { border-left-color:var(--ink); }
+  .card h3 {
+    margin:0 0 2px; font-size:14px; font-weight:600;
+    display:flex; align-items:baseline; gap:9px;
+  }
+  .card .role { color:var(--muted); font-size:13px; margin-bottom:7px; }
+  .tool {
+    display:inline-block; font:11.5px/1.5 var(--mono);
+    border:1px solid var(--rule-strong); color:var(--ink-soft);
+    padding:1px 6px; border-radius:5px; margin:2px 4px 2px 0;
+  }
+  .tag {
+    font-size:11.5px; color:var(--muted); font-weight:400;
+    border:1px solid var(--rule); border-radius:5px; padding:1px 6px;
+  }
+  details.prompt { margin-top:8px; }
+  details.prompt summary {
+    cursor:pointer; color:var(--muted); font-size:12.5px; list-style:none;
+  }
+  details.prompt summary::before { content:"+ "; color:var(--faint); }
+  details.prompt[open] summary::before { content:"– "; }
+  details.prompt textarea {
+    width:100%; min-height:110px; margin-top:8px;
+    font:13px/1.5 var(--mono);
+  }
+
+  /* ---------- live trace: a timeline on a spine ---------- */
+  .ev {
+    position:relative; padding:7px 0 7px 18px; font-size:13.5px;
+    border-left:2px solid var(--rule-strong); color:var(--ink-soft);
+    animation:arrive .22s ease-out;
+  }
+  @keyframes arrive { from { opacity:0; transform:translateY(-3px); } }
+  @media (prefers-reduced-motion:reduce) { .ev { animation:none; } }
+  .ev .k { font-size:11.5px; color:var(--muted); margin-bottom:2px; }
+  .ev.delegate     { border-left-color:var(--ink); }
+  .ev.manages      { border-left-color:var(--ink); }
+  .ev.tool_grant,
+  .ev.skill_grant,
+  .ev.model_tier   { border-left-color:var(--rule-strong); color:var(--muted); }
+  .ev.tool_call,
+  .ev.tool_result  { border-left-color:var(--rule-strong); font-family:var(--mono);
+                     font-size:12.5px; }
+  .ev.agent_result { border-left-color:var(--running); }
+  .ev.final        { border-left-color:var(--running); color:var(--ink);
+                     font-weight:500; }
+  .ev.error        { border-left-color:var(--fault); color:var(--fault); }
+  /* a round of work starting, and work that was not repeated */
+  .ev.parallel     { border-left-color:var(--accent); color:var(--accent); }
+  .ev.reused,
+  .ev.resumed      { border-left-color:var(--accent); color:var(--muted);
+                     font-style:italic; }
+  .ev.blocked      { border-left-color:var(--pending); color:var(--pending); }
+
+  /* ---------- v2: reading measure, trace controls, side panel ---------- */
+  .msg .say, .msg .body { max-width:var(--measure); line-height:1.65; }
+
+  /* Filter chips over the trace. Toggles, so they carry aria-pressed. */
+  .tfilter { display:flex; flex-wrap:wrap; gap:var(--s1);
+             padding:var(--s2) var(--pad) 0; align-items:center; }
+  .tfilter button {
+    font:inherit; font-size:11.5px; color:var(--muted); cursor:pointer;
+    background:none; border:1px solid var(--rule); border-radius:999px;
+    padding:2px 9px; transition:color .15s, border-color .15s, background .15s;
+  }
+  .tfilter button[aria-pressed="true"] {
+    color:var(--ink); border-color:var(--rule-strong); background:var(--sunk);
+  }
+  .tfilter .grow { flex:1; }
+  .tfilter .follow[aria-pressed="true"] {
+    color:var(--accent); border-color:var(--accent); background:none;
+  }
+  .ev { position:relative; }
+  .ev .copy {
+    position:absolute; top:2px; right:2px; opacity:0; font-size:11px;
+    background:var(--surface); border:1px solid var(--rule); cursor:pointer;
+    border-radius:4px; padding:1px 5px; color:var(--muted);
+  }
+  .ev:hover .copy, .ev .copy:focus-visible { opacity:1; }
+  .ev .more { cursor:pointer; color:var(--accent); font-size:11.5px;
+              background:none; border:0; padding:0; font-family:inherit; }
+  .ev .full { display:none; white-space:pre-wrap; margin-top:var(--s1); }
+  .ev.open .full { display:block; }
+  .ev.open .clip { display:none; }
+
+  /* The brief slides the trace aside instead of covering the conversation:
+     a person reading an agent's brief usually wants to see what it just said. */
+  .brief {
+    position:absolute; inset:0; z-index:6; background:var(--surface);
+    overflow-y:auto; padding:var(--pad);
+    border-left:2px solid var(--accent);
+    animation:briefIn .14s ease-out;
+  }
+  @keyframes briefIn { from { transform:translateX(8px); opacity:.6; } }
+  @media (prefers-reduced-motion: reduce) { .brief { animation:none; } }
+  #right { position:relative; }
+
+  /* A state is never colour alone: the word rides with it. */
+  .fig-wrap .state-word {
+    font-size:10px; color:var(--muted); display:block; text-align:center;
+  }
+
+  /* Reduced motion turns the recording pulse into a steady dot and a word. */
+  .mic .recdot { display:none; width:7px; height:7px; border-radius:50%;
+                 background:var(--fault); margin-right:5px; }
+  @media (prefers-reduced-motion: reduce) {
+    .mic.rec .recdot { display:inline-block; }
+    .mic.rec::after { content:"Recording"; font-size:11px; margin-left:4px; }
+  }
+
+  /* The shortcut sheet: a panel, not a modal over the conversation. */
+  .keys { position:fixed; right:18px; bottom:18px; z-index:20; width:290px;
+          background:var(--surface); border:1px solid var(--rule-strong);
+          border-radius:var(--radius); box-shadow:var(--lift);
+          padding:var(--s4); font-size:12.5px; }
+  .keys[hidden] { display:none; }
+  .keys h4 { margin:0 0 var(--s2); font-size:13px; }
+  .keys dl { display:grid; grid-template-columns:auto 1fr; gap:var(--s1) var(--s3);
+             margin:0; }
+  .keys dt { font-family:var(--mono); color:var(--accent); }
+  .keys dd { margin:0; color:var(--ink-soft); }
+  .keys .close { position:absolute; top:6px; right:8px; }
+
+  .runnote { font-family:var(--mono); font-size:11.5px; }
+  .adm th { cursor:pointer; user-select:none; }
+  .adm th:hover { color:var(--accent); }
+  .adm-q { float:right; font:inherit; font-size:12px; font-weight:400;
+           padding:2px 8px; border:1px solid var(--rule); border-radius:999px;
+           background:var(--surface); color:var(--ink); }
+
+  /* Under 900px the right column stacks beneath as collapsible sections. */
+  @media (max-width: 900px) {
+    main { grid-template-columns:1fr; }
+    .divider { display:none; }
+    #right > .shead { cursor:pointer; }
+    #right.collapsed > :not(.shead) { display:none; }
+  }
+
+  /* Deleting an agent is the one irreversible thing in the editor, so it is
+     set apart from the save controls rather than sitting beside them. */
+  .danger-row { margin-top:14px; padding-top:12px;
+                border-top:1px solid var(--rule); }
+  .danger { background:none; color:var(--fault); cursor:pointer;
+            border:1px solid var(--fault); border-radius:var(--radius-sm);
+            padding:5px 11px; font-size:13px; font-family:inherit;
+            transition:background .15s, color .15s; }
+  .danger:hover { background:var(--fault); color:var(--surface); }
+  .danger[disabled] { opacity:.5; cursor:default; }
+  #ed-del-note { font-size:12px; color:var(--faint); }
+  .ev.thinking     { color:var(--faint); }
+
+  /* ---------- notices ---------- */
+  .issue { font-size:13.5px; padding:11px 14px; border-radius:var(--radius-sm); margin-bottom:9px;
+           border:1px solid; }
+  .issue.error   { color:var(--fault);   border-color:var(--fault);   background:transparent; }
+  .issue.warning { color:var(--pending); border-color:var(--pending); background:transparent; }
+  .empty {
+    color:var(--muted); font-size:14px; padding:30px 0; max-width:40ch;
+    line-height:1.6;
+  }
+  .built {
+    font:12.5px/1.6 var(--mono); color:var(--muted); white-space:pre-wrap;
+    border-left:2px solid var(--running); padding:8px 0 8px 14px; margin-bottom:16px;
+  }
+
+  /* ---------- admin ---------- */
+  .kpis { display:flex; flex-wrap:wrap; gap:28px; margin-bottom:26px; }
+  .kpi .n { font-size:27px; font-weight:600; letter-spacing:-0.02em; line-height:1.1; }
+  .kpi .l { font-size:12.5px; color:var(--muted); margin-top:1px; }
+  .kpi.live .n { color:var(--running); }
+  h4.admh {
+    margin:22px 0 8px; font-size:13px; font-weight:550; color:var(--ink);
+  }
+  table.adm { width:100%; border-collapse:collapse; font-size:13.5px; }
+  table.adm th {
+    text-align:left; font-weight:500; color:var(--muted); font-size:12.5px;
+    padding:0 10px 6px 0; border-bottom:1px solid var(--rule-strong);
+  }
+  table.adm td {
+    padding:7px 10px 7px 0; border-bottom:1px solid var(--rule);
+    vertical-align:top; color:var(--ink-soft);
+  }
+  .pill-s { font-size:12px; }
+  .pill-s.running { color:var(--running); }
+  .pill-s.failed  { color:var(--fault); }
+  .pill-s.done    { color:var(--muted); }
+
+  /* ---------- sign in ---------- */
+  .gate {
+    position:fixed; inset:0; z-index:50; background:var(--paper);
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .gate.hidden { display:none; }
+  .authcard {
+    width:100%; max-width:330px; display:flex; flex-direction:column; gap:14px;
+  }
+  .authcard h2 { margin:0; font:22px/1.25 var(--serif); font-weight:600;
+                 letter-spacing:-0.01em; }
+  .authsub { margin:0; color:var(--muted); font-size:13.5px; line-height:1.55; }
+  .authcard label { display:flex; flex-direction:column; gap:5px;
+                    font-size:12.5px; color:var(--muted); }
+  .authcard input {
+    background:var(--surface); border:1px solid var(--rule-strong);
+    border-radius:var(--radius); padding:11px 14px; font-size:14.5px; color:var(--ink);
+  }
+  .authcard input:focus { border-color:var(--accent); outline:none; }
+  .autherr { color:var(--fault); font-size:13px; min-height:18px; }
+  .authswap { font-size:13px; color:var(--muted); }
+  .authswap a { color:var(--accent); text-underline-offset:2px; }
+
+  @media (max-width:900px) {
+    main { grid-template-columns:1fr; grid-template-rows:1fr 1fr; }
+    .msg .who { width:48px; }
+  }
+
+  /* ===== the crew =========================================================
+     Each agent is drawn from a hash of its name, so an agent looks the same
+     every time you see it. Figures are abstract on purpose: this is an
+     operations console, and a cartoon face would undercut it. */
+  .figure { display:block; }
+  .figure .visor { transform-origin:center; }
+  .fig-wrap {
+    position:relative; display:flex; flex-direction:column; align-items:center;
+    gap:7px; width:76px; flex:none; cursor:pointer;
+    padding:10px 4px 8px; border-radius:var(--radius);
+    transition:background .18s ease, transform .18s ease;
+  }
+  .fig-wrap:hover { background:var(--sunk); transform:translateY(-2px); }
+  .fig-wrap .nm {
+    font-size:11.5px; color:var(--muted); text-align:center; line-height:1.25;
+    max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .fig-wrap.lead .nm { color:var(--ink); font-weight:550; }
+  .fig-wrap.active { background:var(--sunk); }
+  .fig-wrap.active .nm { color:var(--running); font-weight:550; }
+  .fig-wrap .state {
+    position:absolute; top:6px; right:8px; width:7px; height:7px;
+    border-radius:50%; background:transparent;
+  }
+  .fig-wrap.active .state { background:var(--running); animation:pulse 1.1s ease-in-out infinite; }
+  .fig-wrap.done   .state { background:var(--rule-strong); }
+  .fig-wrap.failed .state { background:var(--fault); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+
+  /* breathing: barely visible, stops entirely when idle is not wanted */
+  .figure.idle { animation:breathe 4.5s ease-in-out infinite; transform-origin:50% 90%; }
+  @keyframes breathe { 0%,100% { transform:scaleY(1); } 50% { transform:scaleY(.985); } }
+  .figure.talking .visor { animation:speak .42s steps(2,end) infinite; }
+  @keyframes speak { 0%,100% { transform:scaleX(1); opacity:1; }
+                     50% { transform:scaleX(.55); opacity:.75; } }
+  .figure.thinking .visor { animation:ponder 1.6s ease-in-out infinite; }
+  @keyframes ponder { 0%,100% { opacity:.35; } 50% { opacity:1; } }
+
+  .crew {
+    display:flex; flex-wrap:wrap; gap:4px; align-items:flex-start;
+    padding:14px var(--pad); border-bottom:1px solid var(--rule);
+    background:var(--surface);
+  }
+  .crew .conn {
+    align-self:center; width:14px; height:1px; background:var(--rule-strong);
+    flex:none; margin:0 -2px 18px;
+  }
+  .crew-empty { color:var(--faint); font-size:13px; padding:4px 0 2px; }
+  .crew.focused .conn { opacity:.25; transition:opacity .15s; }
+
+  /* ===== dictation =========================================================
+   Record in the browser, transcribe on the machine. The text lands in the
+   message box rather than being sent: a transcript is a draft, and the
+   person should see what was heard before it goes anywhere. */
+let recorder = null, recChunks = [], recStart = 0, recTimer = null;
+let voiceReady = null;          // null = not asked yet
+
+async function micSupported() {
+  if (voiceReady !== null) return voiceReady;
+  try {
+    const s = await (await api("/api/voice")).json();
+    voiceReady = s;
+  } catch {
+    voiceReady = { available: false, install: "Voice input is unavailable." };
+  }
+  return voiceReady;
+}
+
+function micLabel(text) {
+  $("mic").title = text;
+}
+
+async function toggleRecording() {
+  const btn = $("mic");
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();                       // onstop does the upload
+    return;
+  }
+  const status = await micSupported();
+  if (!status.available) {
+    bubble("system", status.install || "Voice input is not set up.");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    bubble("system", "This browser will not give the page a microphone. "
+                   + "On Chrome that usually means the page is not on "
+                   + "localhost or https.");
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    bubble("system", e.name === "NotAllowedError"
+      ? "Microphone permission was refused. Allow it in the browser's "
+        + "address bar, then press the button again."
+      : "No microphone was found.");
+    return;
+  }
+
+  recChunks = [];
+  // Let the browser pick the container it actually supports: Chrome gives
+  // webm/opus, Safari mp4/aac. The backend decodes whatever arrives.
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());   // release the mic light
+    clearInterval(recTimer);
+    btn.classList.remove("rec");
+    const secs = (Date.now() - recStart) / 1000;
+    if (secs < 0.4 || !recChunks.length) {
+      micLabel("Record a message");
+      return;                                    // a stray click, not speech
+    }
+    btn.classList.add("busy"); btn.disabled = true;
+    micLabel("Transcribing…");
+    try {
+      const blob = new Blob(recChunks, { type: recorder.mimeType });
+      const body = new FormData();
+      body.append("clip", blob, "clip." + (
+        recorder.mimeType.includes("mp4") ? "mp4" : "webm"));
+      const out = await (await api("/api/voice",
+                                   { method: "POST", body })).json();
+      if (!out.text) {
+        bubble("system", "Nothing was heard in that recording.");
+      } else {
+        // Append rather than replace: a person may have typed something
+        // already, and losing it to a dictation would be unforgivable.
+        const box = $("input");
+        box.value = (box.value ? box.value.trimEnd() + " " : "") + out.text;
+        box.focus();
+        box.dispatchEvent(new Event("input"));   // let the autosize run
+      }
+    } catch (e) {
+      bubble("system", e.message || "Could not transcribe that recording.");
+    } finally {
+      btn.classList.remove("busy"); btn.disabled = false;
+      micLabel("Record a message");
+    }
+  };
+
+  recorder.start();
+  recStart = Date.now();
+  btn.classList.add("rec");
+  recTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - recStart) / 1000);
+    micLabel(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+             + " — press to stop");
+    if (s >= 120 && recorder?.state === "recording") recorder.stop();
+  }, 500);
+}
+
+/* ===== the workspace ====================================================
+     Files are the team's whole world, so the strip sits with the run bar
+     rather than hiding in a dialog: what is here is what the agents can see. */
+  .files { border-top:1px solid var(--rule); padding:10px 14px 12px; }
+  .files-head { display:flex; align-items:baseline; gap:10px; }
+  .files-title { font-size:13px; font-weight:600; color:var(--ink); }
+  .files-note { font-size:12px; color:var(--faint); flex:1; }
+  .upl { font-size:12px; cursor:pointer; color:var(--ink);
+         border:1px solid var(--rule); border-radius:7px; padding:3px 9px;
+         background:var(--surface); transition:background .15s, border-color .15s; }
+  .upl:hover { background:var(--sunk); border-color:var(--rule-strong); }
+  .files-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { display:inline-flex; align-items:center; gap:7px; font-size:12px;
+          background:var(--surface); border:1px solid var(--rule);
+          border-radius:7px; padding:3px 6px 3px 9px; color:var(--ink); }
+  .chip .sz { color:var(--faint); }
+  .chip button { border:0; background:none; cursor:pointer; color:var(--faint);
+                 font-size:14px; line-height:1; padding:0 2px; }
+  .chip button:hover { color:var(--fault); }
+  .files-empty { font-size:12px; color:var(--faint); }
+  .stranded {
+    font-size:12px; color:var(--ink-soft); background:var(--sunk);
+    border:1px solid var(--rule); border-radius:var(--radius-sm);
+    padding:var(--s2) var(--s3); margin-top:var(--s2);
+  }
+  .stranded[hidden] { display:none; }
+  .stranded button { margin-left:6px; }
+
+  /* Dictation. The button is quiet until it is recording, when it becomes
+     the only moving thing on the page — that pulse is the recording light,
+     so it is the one piece of motion worth spending. */
+  .mic { background:none; border:1px solid var(--rule); color:var(--muted);
+         border-radius:var(--radius-sm); padding:0 10px; cursor:pointer;
+         display:flex; align-items:center; transition:color .15s,
+         border-color .15s, background .15s; }
+  .mic:hover { color:var(--ink); border-color:var(--rule-strong); }
+  .mic[disabled] { opacity:.45; cursor:default; }
+  .mic.rec { color:var(--fault); border-color:var(--fault);
+             background:color-mix(in srgb, var(--fault) 8%, transparent);
+             animation:recpulse 1.6s ease-in-out infinite; }
+  @keyframes recpulse { 50% { opacity:.55; } }
+  @media (prefers-reduced-motion: reduce) { .mic.rec { animation:none; } }
+  .mic.busy { color:var(--accent); border-color:var(--accent); }
+  .chip .mark { font-size:10px; letter-spacing:.04em; color:var(--accent);
+                border:1px solid var(--accent); border-radius:4px;
+                padding:0 3px; }
+  /* The whole conversation pane accepts a drop, so the cue belongs to the
+     pane rather than to a separate target the person has to aim for. */
+  #chat-pane { position:relative; }
+  #chat-pane.dropping::after {
+    content:"Drop files or a folder to add them";
+    position:absolute; inset:8px; z-index:5;
+    display:flex; align-items:center; justify-content:center;
+    border:2px dashed var(--accent); border-radius:var(--radius);
+    background:color-mix(in srgb, var(--surface) 92%, transparent);
+    color:var(--accent); font-size:14px; pointer-events:none;
+  }
+
+  /* ===== the architect, speaking ========================================= */
+  .stage {
+    flex:none; display:flex; gap:14px; align-items:flex-start;
+    padding:16px var(--pad) 14px; border-bottom:1px solid var(--rule);
+    background:var(--surface);
+  }
+  .stage .says { flex:1; min-width:0; }
+  .stage .says .line {
+    font:15px/1.5 var(--serif); color:var(--ink); margin:2px 0 0;
+  }
+  .stage .says .hint { font-size:12.5px; color:var(--muted); margin-top:5px; }
+  .stage .says .hint b { font-weight:550; color:var(--ink-soft); }
+
+  /* progress as a measured bar, not a decorative ring */
+  .meter { display:flex; gap:3px; margin-top:9px; }
+  .meter i {
+    height:3px; flex:1; background:var(--rule-strong); border-radius:2px;
+    transition:background .3s ease;
+  }
+  .meter i.on { background:var(--running); }
+
+  /* ===== requirements: hover + click to open ============================= */
+  .slot { cursor:default; transition:background .15s ease; border-radius:6px;
+          padding:5px 8px; margin:0 -8px; border-bottom:1px solid var(--rule); }
+  .slot:hover { background:var(--sunk); }
+  .slot.done { cursor:pointer; }
+  .slot .val { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+               white-space:nowrap; }
+  .slot.open .val { white-space:normal; }
+  .slot.just-filled { animation:fill .5s ease-out; }
+  @keyframes fill { from { background:rgba(31,111,92,.16); } }
+
+  /* ===== general polish ================================================== */
+  .card { transition:background .15s ease, box-shadow .2s ease;
+          border-radius:0 var(--radius) var(--radius) 0; }
+  .card:hover { background:var(--sunk); box-shadow:var(--lift); }
+  .tool { transition:border-color .15s ease, color .15s ease; }
+  .card:hover .tool { border-color:var(--rule-strong); color:var(--ink); }
+  .ev { transition:background .15s ease; }
+  .ev:hover { background:var(--sunk); }
+  table.adm tr { transition:background .12s ease; }
+  table.adm tbody tr:hover td, table.adm tr:hover td { background:var(--sunk); }
+  .tabs button, button.ghost, button.primary { transition:all .15s ease; }
+  button.primary:active:not(:disabled) { transform:translateY(1px); }
+  .kpi { transition:transform .18s ease; }
+  .kpi:hover { transform:translateY(-1px); }
+
+  @media (prefers-reduced-motion:reduce) {
+    .figure, .figure .visor, .fig-wrap.active .state, .slot.just-filled
+      { animation:none !important; }
+    * { transition-duration:.01ms !important; }
+  }
+
+  /* ---- an agent you can open -------------------------------------------- */
+  .fig-wrap:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .fig-wrap.picked { background:var(--sunk); box-shadow:var(--lift); }
+  .fig-wrap.picked .nm { color:var(--ink); font-weight:550; }
+
+  .brief {
+    border:1px solid var(--rule-strong); border-radius:var(--radius);
+    background:var(--surface); padding:16px 18px; margin-bottom:16px;
+    box-shadow:var(--lift); animation:open .2s ease-out;
+  }
+  @keyframes open { from { opacity:0; transform:translateY(-4px); } }
+  .brief header {
+    all:unset; display:flex; align-items:center; gap:12px; margin-bottom:10px;
+  }
+  .brief h3 { margin:0; font-size:16px; font-weight:600; }
+  .brief .who-role { color:var(--muted); font-size:13.5px; margin-top:1px; }
+  .brief .close {
+    margin-left:auto; background:none; border:0; cursor:pointer;
+    color:var(--muted); font-size:18px; line-height:1; padding:2px 6px;
+    border-radius:8px;
+  }
+  .brief .close:hover { background:var(--sunk); color:var(--ink); }
+  .brief dl { margin:0; display:grid; grid-template-columns:92px 1fr; gap:7px 14px;
+              font-size:13.5px; }
+  .brief dt { color:var(--muted); }
+  .brief dd { margin:0; color:var(--ink-soft); }
+  .brief .say {
+    margin-top:12px; padding-top:12px; border-top:1px solid var(--rule);
+    font:14.5px/1.6 var(--serif); color:var(--ink-soft);
+    max-height:150px; overflow:auto; white-space:pre-wrap;
+  }
+  .filterbar {
+    display:flex; align-items:center; gap:9px; margin-bottom:12px;
+    font-size:13px; color:var(--muted);
+  }
+  .filterbar button {
+    background:none; border:1px solid var(--rule-strong); border-radius:999px;
+    padding:4px 12px; font-size:12.5px; cursor:pointer; color:var(--ink-soft);
+  }
+  .filterbar button:hover { border-color:var(--ink); color:var(--ink); }
+
+  /* ---- the doorkeeper ---------------------------------------------------- */
+  .gate-inner {
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    width:100%; max-width:340px;
+  }
+  .keeper { width:168px; height:142px; flex:none; overflow:visible; }
+  .k-shadow { fill:var(--ink); opacity:.07; }
+  .k-body   { fill:var(--accent); }
+  .k-head   { fill:var(--accent); }
+  .k-ear    { fill:var(--accent); }
+  .k-white  { fill:var(--surface); }
+  .k-pupil  { fill:var(--ink); transition:transform .12s ease-out; }
+  .k-lid    { fill:var(--accent); transition:height .14s ease; }
+  .k-mouth  { fill:none; stroke:var(--surface); stroke-width:2.4;
+              stroke-linecap:round; opacity:.85; }
+  .k-arm    { fill:var(--accent); transform-origin:50% 95%;
+              transform:translateY(34px) scaleY(.6); opacity:0;
+              transition:transform .26s cubic-bezier(.4,1.3,.5,1), opacity .18s ease; }
+  .keeper.covering .k-arm { transform:translateY(0) scaleY(1); opacity:1; }
+  .keeper.covering .k-pupil { opacity:0; }
+  .keeper.blinking .k-lid { height:22px; }
+
+  .authcard { width:100%; max-width:330px; }
+  .pw { position:relative; display:block; }
+  .pw input { width:100%; padding-right:46px; }
+  .peek {
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    background:none; border:0; cursor:pointer; padding:7px; border-radius:9px;
+    color:var(--muted); display:flex; align-items:center;
+  }
+  .peek:hover { background:var(--sunk); color:var(--ink); }
+  .peek svg { stroke:currentColor; stroke-width:1.7; fill:none;
+              stroke-linecap:round; stroke-linejoin:round; }
+  .pk-slash { opacity:0; transition:opacity .15s ease; }
+  .peek[aria-pressed="true"] .pk-slash { opacity:1; }
+  .peek[aria-pressed="true"] { color:var(--accent); }
+
+  @media (prefers-reduced-motion:reduce) {
+    .k-pupil, .k-lid, .k-arm { transition:none !important; }
+  }
+
+  /* ---- editing an agent -------------------------------------------------- */
+  .brief .edit { display:grid; gap:10px; margin-top:12px; padding-top:12px;
+                 border-top:1px solid var(--rule); }
+  .brief .edit label { display:flex; flex-direction:column; gap:4px;
+                       font-size:12.5px; color:var(--muted); }
+  .brief .edit input, .brief .edit textarea {
+    background:var(--paper); border:1px solid var(--rule-strong);
+    border-radius:var(--radius-sm); padding:9px 11px; font-size:14px;
+    color:var(--ink); font-family:var(--sans);
+  }
+  .brief .edit textarea { min-height:62px; resize:vertical; line-height:1.5; }
+  .brief .edit .row { display:flex; gap:9px; align-items:center; }
+  .brief .edit .row .grow { flex:1; font-size:12.5px; color:var(--muted); }
+  .brief .edit .check { display:flex; flex-direction:row; align-items:center;
+                        gap:8px; font-size:13px; color:var(--ink-soft); }
+  .memview {
+    font:12.5px/1.6 var(--mono); background:var(--paper);
+    border:1px solid var(--rule-strong); border-radius:var(--radius-sm);
+    padding:10px 12px; min-height:90px; max-height:200px; overflow:auto;
+    white-space:pre-wrap; width:100%; color:var(--ink-soft); resize:vertical;
+  }
+
+  /* ---- agents speaking while they work ----------------------------------- */
+  .fig-wrap { overflow:visible; }
+  .bubble {
+    position:absolute; bottom:calc(100% + 6px); left:50%;
+    transform:translateX(-50%) translateY(4px); opacity:0;
+    width:max-content; max-width:230px; z-index:5; pointer-events:none;
+    background:var(--ink); color:var(--surface); font-size:12.5px; line-height:1.45;
+    padding:7px 11px; border-radius:12px; box-shadow:var(--lift);
+    transition:opacity .2s ease, transform .2s ease;
+  }
+  .bubble::after {
+    content:""; position:absolute; top:100%; left:50%; margin-left:-5px;
+    border:5px solid transparent; border-top-color:var(--ink);
+  }
+  .bubble.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  .bubble.fault { background:var(--fault); }
+  .bubble.fault::after { border-top-color:var(--fault); }
+  @media (prefers-reduced-motion:reduce) { .bubble { transition:none; } }
+
+  .runstat {
+    display:flex; align-items:center; gap:8px; font-size:12.5px;
+    color:var(--muted); padding:0 0 10px;
+  }
+  .runstat .spin {
+    width:9px; height:9px; border-radius:50%; background:var(--running);
+    animation:pulse 1.1s ease-in-out infinite; flex:none;
+  }
+  .runstat.over { color:var(--pending); }
+  .took { font-size:11.5px; color:var(--faint); margin-top:4px; }
+  .took.slow { color:var(--pending); }
+  @media (prefers-reduced-motion:reduce) { .runstat .spin { animation:none; } }
+</style>
+</head>
+<body>
+<div id="gate" class="gate">
+  <div class="gate-inner">
+    <svg id="keeper" class="keeper" viewBox="0 0 160 136" aria-hidden="true">
+      <!-- a doorkeeper from the same family as the agents: it watches the
+           cursor, and covers its eyes while you type a password -->
+      <ellipse class="k-shadow" cx="80" cy="128" rx="40" ry="5"/>
+      <path class="k-body" d="M38 134 q0 -40 42 -40 q42 0 42 40 z"/>
+      <rect class="k-head" x="46" y="26" width="68" height="60" rx="22"/>
+      <circle class="k-ear" cx="46" cy="52" r="7"/>
+      <circle class="k-ear" cx="114" cy="52" r="7"/>
+      <g class="k-eyes">
+        <circle class="k-white" cx="66" cy="54" r="11"/>
+        <circle class="k-white" cx="94" cy="54" r="11"/>
+        <circle class="k-pupil" cx="66" cy="54" r="4.6"/>
+        <circle class="k-pupil" cx="94" cy="54" r="4.6"/>
+        <rect class="k-lid" x="54" y="42" width="24" height="0" rx="2"/>
+        <rect class="k-lid" x="82" y="42" width="24" height="0" rx="2"/>
+      </g>
+      <path class="k-mouth" d="M72 72 q8 6 16 0"/>
+      <g class="k-arm k-arm-l">
+        <path d="M40 104 q-6 -26 22 -34 q10 -3 14 4 q4 7 -4 11 q-18 7 -14 22 z"/>
+      </g>
+      <g class="k-arm k-arm-r">
+        <path d="M120 104 q6 -26 -22 -34 q-10 -3 -14 4 q-4 7 4 11 q18 7 14 22 z"/>
+      </g>
+    </svg>
+
+    <form id="authform" class="authcard">
+      <h2 id="auth-title">Sign in</h2>
+      <p class="authsub" id="auth-sub">Your teams and their work stay in your account.</p>
+      <label>Username
+        <input id="au-user" autocomplete="username" autocapitalize="off"
+               spellcheck="false" placeholder="your name" />
+      </label>
+      <label>Password
+        <span class="pw">
+          <input id="au-pass" type="password" autocomplete="current-password"
+                 placeholder="at least 10 characters" />
+          <button type="button" id="au-peek" class="peek"
+                  aria-label="Show password" aria-pressed="false" title="Show password">
+            <svg viewBox="0 0 22 22" width="19" height="19" aria-hidden="true">
+              <path class="pk-open" d="M1.6 11s3.6-6 9.4-6 9.4 6 9.4 6-3.6 6-9.4 6-9.4-6-9.4-6Z"/>
+              <circle class="pk-open" cx="11" cy="11" r="2.9"/>
+              <line class="pk-slash" x1="3.6" y1="18.4" x2="18.4" y2="3.6"/>
+            </svg>
+          </button>
+        </span>
+      </label>
+      <div class="autherr" id="au-err"></div>
+      <button class="primary" id="au-go" type="submit">Sign in</button>
+      <div class="authswap">
+        <span id="au-swaptext">No account yet?</span>
+        <a href="#" id="au-swap">Create one</a>
+      </div>
+    </form>
+  </div>
+</div>
+<header>
+  <h1>AgentForge</h1>
+  <span class="pill"><span class="dot" id="d-rt"></span>
+    <span id="t-rt" aria-live="polite">runtime…</span></span>
+  <span class="pill"><span class="dot" id="d-or"></span>
+    <span id="t-or" aria-live="polite">manager…</span></span>
+  <div class="tabs" role="tablist" aria-label="Mode">
+    <button id="tab-build" class="on" role="tab" aria-selected="true">Build</button>
+    <button id="tab-run" role="tab" aria-selected="false">Run</button>
+    <button id="tab-admin" role="tab" aria-selected="false"
+            style="display:none">Admin</button>
+  </div>
+</header>
+
+<div class="shell">
+<nav class="rail" aria-label="Account">
+  <span id="whoami" hidden></span>
+  <button id="rail-acct" type="button" aria-haspopup="menu"
+          aria-expanded="false" aria-label="Account and appearance"
+          title="Account and appearance">
+    <span class="initial" id="rail-initial">·</span>
+  </button>
+  <span class="spacer"></span>
+</nav>
+<main>
+  <!-- LEFT: conversation -->
+  <section id="chat-pane">
+    <div class="shead"><span id="left-title">Describe the work</span></div>
+    <div class="stage" id="stage">
+      <div id="stage-fig"></div>
+      <div class="says">
+        <p class="line" id="stage-line">Tell me what you want done.</p>
+        <div class="hint" id="stage-hint"></div>
+        <div class="meter" id="stage-meter"></div>
+      </div>
+    </div>
+    <div class="scroll" id="chat"></div>
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" aria-label="Message"
+                placeholder="Describe the work in your own words"></textarea>
+      <button class="attach" id="attach" type="button"
+              aria-haspopup="menu" aria-expanded="false"
+              aria-label="Add files or a folder" title="Add files or a folder">
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"
+             fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.4 11.1 12.2 20.3a5.2 5.2 0 0 1-7.4-7.4l9.2-9.2a3.5 3.5
+                   0 0 1 4.9 4.9l-9.2 9.2a1.7 1.7 0 0 1-2.5-2.5l8.5-8.5"/>
+        </svg>
+      </button>
+      <button class="mic" id="mic" type="button" title="Record a message"
+              aria-label="Record a message" aria-pressed="false">
+        <span class="recdot" aria-hidden="true"></span>
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+          <path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"
+                fill="currentColor"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button class="primary" id="send" type="submit">Send</button>
+    </form>
+  </section>
+
+  <div class="divider" id="divider" role="separator" aria-orientation="vertical"
+       aria-label="Resize panels" tabindex="0"></div>
+
+  <!-- RIGHT: team preview / run trace -->
+  <section id="right-pane">
+    <div class="shead" id="right-head">
+      <span id="right-title">The team</span>
+      <span class="tag" id="right-tag" style="margin-left:auto"></span>
+    </div>
+    <div class="crew" id="crew"><div class="crew-empty">No agents yet.</div></div>
+    <div class="tfilter" id="tfilter" hidden></div>
+    <div class="scroll" id="right" aria-live="polite" aria-relevant="additions"
+         ><div class="empty">Describe the work on the left. The team takes shape here as the picture gets clearer.</div></div>
+    <div class="bar" id="buildbar">
+      <span class="grow" id="buildnote">Nothing drafted yet.</span>
+      <button class="ghost" id="btn-reset">Start over</button>
+      <button class="primary" id="btn-create" disabled>Create team</button>
+    </div>
+    <div class="files" id="files" style="display:none">
+      <div class="files-head">
+        <span class="files-title">Workspace</span>
+        <span class="files-note" id="files-note">the only folder this team can reach</span>
+        <input type="file" id="upl" multiple hidden>
+        <input type="file" id="upl-dir" webkitdirectory directory multiple hidden>
+      </div>
+      <div class="stranded" id="stranded" hidden></div>
+      <div class="files-list" id="files-list"></div>
+    </div>
+    <div class="bar" id="runbar" style="display:none">
+      <select id="teamsel"></select>
+      <span class="grow" id="runnote"></span>
+      <button class="ghost" id="btn-retry" style="display:none">Retry what failed</button>
+      <button class="ghost" id="btn-export">Download spec</button>
+      <button class="danger" id="btn-del-team">Delete team</button>
+    </div>
+  </section>
+</main>
+</div>
+
+<div class="pop" id="acct-menu" hidden role="menu" aria-label="Account">
+  <div class="who">
+    <b id="acct-name">—</b>
+    <span id="acct-role">signed in on this device</span>
+  </div>
+  <div class="label">Appearance</div>
+  <div class="seg" id="theme-seg">
+    <button type="button" data-theme="light" aria-pressed="false">Light</button>
+    <button type="button" data-theme="dark"  aria-pressed="false">Dark</button>
+  </div>
+  <div class="sep"></div>
+  <div class="label" id="acct-switch-label">Switch account</div>
+  <div class="acct-list" id="acct-list"></div>
+  <button class="row" id="acct-add" type="button" role="menuitem">
+    Sign in as someone else
+  </button>
+  <div class="sep"></div>
+  <div class="label" id="sess-label">Signed in on 1 device</div>
+  <button class="row" id="acct-revoke" type="button" role="menuitem">
+    Sign out everywhere else
+  </button>
+  <div class="sep"></div>
+  <button class="row danger-row" id="acct-out" type="button" role="menuitem">
+    Sign out
+  </button>
+</div>
+
+<div class="pop" id="attach-menu" hidden role="menu" aria-label="Add to workspace">
+  <button class="row" id="attach-files" type="button" role="menuitem">
+    Add files…
+  </button>
+  <button class="row" id="attach-folder" type="button" role="menuitem">
+    Add a folder…
+  </button>
+  <div class="label" style="padding-top:6px">
+    Or drop them anywhere on the conversation.
+  </div>
+</div>
+
+<div class="keys" id="keys" hidden role="dialog" aria-label="Keyboard shortcuts">
+  <button class="close" id="keys-close" aria-label="Close">×</button>
+  <h4>Keyboard</h4>
+  <dl>
+    <dt>Enter</dt><dd>send</dd>
+    <dt>Shift+Enter</dt><dd>new line</dd>
+    <dt>Ctrl/⌘ K</dt><dd>focus the message box</dd>
+    <dt>1 2 3</dt><dd>Build, Run, Admin</dd>
+    <dt>Esc</dt><dd>close a panel, or disarm a delete</dd>
+    <dt>?</dt><dd>this list</dd>
+  </dl>
+</div>
+
+<script>
+const API = location.origin;
+let authMode = "login";
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { credentials: "same-origin", ...opts });
+  if (r.status === 401) { showGate(); throw new Error("Sign in first."); }
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = j.detail || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r;
+}
+const jpost = (path, body) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body || {}),
+}).then(r => r.json());
+
+function showGate(mode) {
+  authMode = mode || authMode;
+  $("gate").classList.remove("hidden");
+  renderAuthMode();
+  setTimeout(() => $("au-user").focus(), 30);
+}
+function hideGate() { $("gate").classList.add("hidden"); }
+
+function renderAuthMode() {
+  const signup = authMode === "signup";
+  if (window.resetPeek) window.resetPeek();
+  $("auth-title").textContent = signup ? "Create your account" : "Sign in";
+  $("auth-sub").textContent = signup
+    ? "Your password is hashed before it is stored — it is never saved anywhere in readable form. Minimum 10 characters."
+    : "Your agents are private to your account.";
+  $("au-go").textContent = signup ? "Create account" : "Sign in";
+  $("au-swaptext").textContent = signup ? "Already have an account?" : "No account yet?";
+  $("au-swap").textContent = signup ? "Sign in" : "Create one";
+  $("au-pass").setAttribute("autocomplete", signup ? "new-password" : "current-password");
+  $("au-err").textContent = "";
+}
+
+async function checkAuth() {
+  try {
+    const me = await (await fetch(`${API}/api/auth/me`, { credentials: "same-origin" })).json();
+    if (me.signed_in) {
+      hideGate();
+      $("whoami").textContent = me.username;
+      rememberAccount(me.username); renderAccountMenu();
+      return true;
+    }
+    showGate(me.any_accounts ? "login" : "signup");
+  } catch { showGate("login"); }
+  return false;
+}
+let sessionId = null, spec = null, issues = [], mode = "build", activeTeam = null, busy = false;
+let lastRunId = null, runFailed = false;
+let progress = null, built = null, justFilled = [], runSpec = null;
+const SLOTS = ["outcome","deliverable","steps","sources","trigger","limits","success"];
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => (s ?? "").toString().replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+
+/* ---------------------------------------------------------------- figures
+   An agent's appearance is derived from its name, so the same agent looks the
+   same every time. Abstract shapes, not faces: this is a console. */
+function hash32(s) {
+  let x = 2166136261;
+  for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 16777619); }
+  return x >>> 0;
+}
+/* ===== what survives a reload ==========================================
+   Theme, split ratio, trace filters and last mode. Everything here is a
+   display preference, never anything about the user's teams: those live on
+   the server, where another device can see them. */
+const SAVE = "agentforge.ui";
+function prefs() {
+  try { return JSON.parse(localStorage.getItem(SAVE) || "{}"); }
+  catch { return {}; }          // corrupt or blocked storage is not fatal
+}
+function savePref(k, v) {
+  try {
+    const all = prefs(); all[k] = v;
+    localStorage.setItem(SAVE, JSON.stringify(all));
+  } catch { /* private mode: the session still works, it just forgets */ }
+}
+
+/* ===== theme ============================================================
+   An explicit choice wins over the system preference; with nothing stored
+   the system decides, which is why the attribute is removed rather than set
+   to a third value. */
+/* Which theme is in force. There are two, and one of them is always pinned:
+   the first visit takes the machine's current preference as its starting
+   point and then stops following it, so the app never changes appearance
+   underneath someone mid-task. */
+function currentTheme() {
+  return prefs().theme
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+
+function applyTheme(choice) {
+  const root = document.documentElement;
+  if (choice === "light" || choice === "dark") root.dataset.theme = choice;
+  else delete root.dataset.theme;
+}
+
+/* ===== the draggable divider =========================================== */
+function wireSplit() {
+  const main = document.querySelector("main"), bar = $("divider");
+  if (!main || !bar) return;
+  const setRatio = (r) => {
+    const clamped = Math.min(3.2, Math.max(0.8, r));   // neither pane vanishes
+    main.style.setProperty("--split", clamped + "fr");
+    return clamped;
+  };
+  const stored = prefs().split;
+  if (stored) setRatio(stored);
+
+  let dragging = false;
+  const move = (e) => {
+    if (!dragging) return;
+    const box = main.getBoundingClientRect();
+    const x = Math.min(box.right - 240, Math.max(box.left + 320, e.clientX));
+    // ratio of left to right, which is exactly what the grid wants
+    setRatio((x - box.left) / Math.max(1, box.right - x));
+  };
+  bar.addEventListener("pointerdown", (e) => {
+    dragging = true; bar.classList.add("dragging");
+    main.classList.add("dragging"); bar.setPointerCapture(e.pointerId);
+  });
+  bar.addEventListener("pointermove", move);
+  bar.addEventListener("pointerup", () => {
+    dragging = false; bar.classList.remove("dragging");
+    main.classList.remove("dragging");
+    const cur = parseFloat(getComputedStyle(main).getPropertyValue("--split"));
+    if (cur) savePref("split", cur);
+  });
+  bar.addEventListener("dblclick", () => {
+    setRatio(1.6); savePref("split", 1.6);
+  });
+  // the divider is focusable, so it answers the arrow keys too
+  bar.addEventListener("keydown", (e) => {
+    const cur = parseFloat(
+      getComputedStyle(main).getPropertyValue("--split")) || 1.6;
+    if (e.key === "ArrowLeft")  savePref("split", setRatio(cur - 0.1));
+    else if (e.key === "ArrowRight") savePref("split", setRatio(cur + 0.1));
+    else return;
+    e.preventDefault();
+  });
+}
+
+const FIG_HUES = [204, 162, 28, 268, 340, 94, 186, 14];
+
+function figure(name, { lead = false, size = 40, state = "idle" } = {}) {
+  const hu = hash32(name), hue = FIG_HUES[hu % FIG_HUES.length];
+  const sat = lead ? 10 : 34, lig = lead ? 32 : 46;
+  const body = `hsl(${hue} ${sat}% ${lig}%)`;
+  const shoulders = 3 + (hu >> 3) % 3;          // 3..5  silhouette variation
+  const visorW = 10 + (hu >> 6) % 6;            // 10..15
+  const antenna = (hu >> 9) % 3 === 0;
+  const w = size, h = size;
+  return `
+  <svg class="figure ${state}" width="${w}" height="${h}" viewBox="0 0 40 40"
+       role="img" aria-label="${esc(name)}">
+    ${antenna ? `<line x1="20" y1="4" x2="20" y2="9" stroke="${body}"
+         stroke-width="1.5" stroke-linecap="round"/>
+       <circle cx="20" cy="3" r="1.6" fill="${body}"/>` : ""}
+    <rect x="${20 - 8}" y="8" width="16" height="13" rx="${lead ? 3 : 6}"
+          fill="${body}"/>
+    <rect class="visor" x="${20 - visorW / 2}" y="13" width="${visorW}" height="3"
+          rx="1.5" fill="var(--surface)" opacity=".92"/>
+    <path d="M${20 - shoulders - 6} 36 q0 -10 ${shoulders + 6} -10
+             q${shoulders + 6} 0 ${shoulders + 6} 10 z" fill="${body}"
+          opacity="${lead ? 1 : .88}"/>
+    ${lead ? `<rect x="14" y="31" width="12" height="1.6" rx="0.8"
+          fill="var(--surface)" opacity=".55"/>` : ""}
+  </svg>`;
+}
+
+function figureCard(a, { lead = false, state = "" } = {}) {
+  const grants = [...(a.toolsets || []), ...(a.skills || [])];
+  const title = `${a.nickname ? a.nickname + " (" + a.name + ")" : a.name}` +
+                `${a.role ? " — " + a.role : ""}` +
+                (grants.length ? "\nGrants: " + grants.join(", ") : "\nNo tools") +
+                (a.manages && a.manages.length ? "\nLeads: " + a.manages.join(", ") : "");
+  return `<div class="fig-wrap ${lead ? "lead" : ""} ${state}" data-agent="${esc(a.name)}"
+               role="button" aria-label="${esc(title.replace(/\n/g, ". "))}"
+               title="${esc(title)}">
+            <span class="state"></span>
+            ${figure(a.name, { lead, size: lead ? 46 : 40 })}
+            <span class="nm">${esc(a.nickname || a.name)}</span>
+            <span class="state-word" aria-live="polite"></span>
+          </div>`;
+}
+
+function renderCrew(spec, activeName) {
+  if (!spec) {
+    $("crew").innerHTML = `<div class="crew-empty">No agents yet.</div>`;
+    return;
+  }
+  const sup = { name: spec.main_agent.name, role: spec.main_agent.goal, manages: [] };
+  const managed = new Set((spec.sub_agents || []).flatMap(a => a.manages || []));
+  const tops = (spec.sub_agents || []).filter(a => !managed.has(a.name));
+  const rest = (spec.sub_agents || []).filter(a => managed.has(a.name));
+  const mark = (a) => figureCard(a, {
+    lead: !!(a.manages && a.manages.length),
+    state: a.name === activeName ? "active" : "",
+  });
+  $("crew").innerHTML =
+    figureCard(sup, { lead: true, state: activeName === sup.name ? "active" : "" }) +
+    `<span class="conn"></span>` +
+    tops.map(mark).join("") +
+    (rest.length ? `<span class="conn"></span>` + rest.map(mark).join("") : "");
+  wireCrew();
+}
+
+async function loadRunCrew() {
+  if (!activeTeam) { renderCrew(null); runSpec = null; return; }
+  try {
+    const t = await (await api(`/api/teams/${activeTeam}`)).json();
+    runSpec = t.spec;
+    renderCrew(runSpec);
+    $("right-tag").textContent =
+      `${(runSpec.sub_agents || []).length + 1} agents`;
+  } catch { renderCrew(null); }
+}
+
+/* ===== dictation =========================================================
+   Record in the browser, transcribe on the machine. The text lands in the
+   message box rather than being sent: a transcript is a draft, and the
+   person should see what was heard before it goes anywhere. */
+let recorder = null, recChunks = [], recStart = 0, recTimer = null;
+let voiceReady = null;          // null = not asked yet
+
+async function micSupported() {
+  if (voiceReady !== null) return voiceReady;
+  try {
+    const s = await (await api("/api/voice")).json();
+    voiceReady = s;
+  } catch {
+    voiceReady = { available: false, install: "Voice input is unavailable." };
+  }
+  return voiceReady;
+}
+
+function micLabel(text) {
+  $("mic").title = text;
+}
+
+async function toggleRecording() {
+  const btn = $("mic");
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();                       // onstop does the upload
+    return;
+  }
+  const status = await micSupported();
+  if (!status.available) {
+    bubble("system", status.install || "Voice input is not set up.");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    bubble("system", "This browser will not give the page a microphone. "
+                   + "On Chrome that usually means the page is not on "
+                   + "localhost or https.");
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    bubble("system", e.name === "NotAllowedError"
+      ? "Microphone permission was refused. Allow it in the browser's "
+        + "address bar, then press the button again."
+      : "No microphone was found.");
+    return;
+  }
+
+  recChunks = [];
+  // Let the browser pick the container it actually supports: Chrome gives
+  // webm/opus, Safari mp4/aac. The backend decodes whatever arrives.
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());   // release the mic light
+    clearInterval(recTimer);
+    btn.classList.remove("rec");
+    const secs = (Date.now() - recStart) / 1000;
+    if (secs < 0.4 || !recChunks.length) {
+      micLabel("Record a message");
+      return;                                    // a stray click, not speech
+    }
+    btn.classList.add("busy"); btn.disabled = true;
+    micLabel("Transcribing…");
+    try {
+      const blob = new Blob(recChunks, { type: recorder.mimeType });
+      const body = new FormData();
+      body.append("clip", blob, "clip." + (
+        recorder.mimeType.includes("mp4") ? "mp4" : "webm"));
+      const out = await (await api("/api/voice",
+                                   { method: "POST", body })).json();
+      if (!out.text) {
+        bubble("system", "Nothing was heard in that recording.");
+      } else {
+        // Append rather than replace: a person may have typed something
+        // already, and losing it to a dictation would be unforgivable.
+        const box = $("input");
+        box.value = (box.value ? box.value.trimEnd() + " " : "") + out.text;
+        box.focus();
+        box.dispatchEvent(new Event("input"));   // let the autosize run
+      }
+    } catch (e) {
+      bubble("system", e.message || "Could not transcribe that recording.");
+    } finally {
+      btn.classList.remove("busy"); btn.disabled = false;
+      micLabel("Record a message");
+    }
+  };
+
+  recorder.start();
+  recStart = Date.now();
+  btn.classList.add("rec");
+  recTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - recStart) / 1000);
+    micLabel(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+             + " — press to stop");
+    if (s >= 120 && recorder?.state === "recording") recorder.stop();
+  }, 500);
+}
+
+/* ===== the workspace ====================================================
+   Agents cannot reach the machine, so this is the only way a file gets to
+   them. Listing, adding and removing all go through the team's own endpoint,
+   which is scoped to the signed-in user: another account's workspace is a
+   404, not an empty list. */
+/* Where an upload goes depends on where we are. During the interview there
+   is no team yet, so files wait in the session's own folder and are moved
+   into the workspace the moment the team is built. */
+function filesUrl() {
+  if (mode === "build") {
+    return sessionId ? `/api/session/${sessionId}/files` : null;
+  }
+  return activeTeam ? `/api/teams/${activeTeam}/workspace` : null;
+}
+
+const KIND_MARK = { image: "img", pdf: "pdf", text: "", other: "" };
+
+async function loadFiles() {
+  const url = filesUrl();
+  const box = $("files-list"), note = $("files-note");
+  if (!url) { box.innerHTML = ""; return; }
+  try {
+    // api() throws on a non-2xx, so there is no ok-check here on purpose.
+    const { files, note: advice } = await (await api(url)).json();
+    if (advice) note.title = advice;
+    if (mode === "run" && activeTeam) checkStranded();
+    box.innerHTML = files.length
+      ? files.map(f => {
+          const mark = KIND_MARK[f.kind] || "";
+          return `<span class="chip" title="${esc(f.name)}">`
+            + (mark ? `<span class="mark">${mark}</span>` : "")
+            + `${esc(f.name)}<span class="sz">${fmtBytes(f.bytes)}</span>`
+            + `<button title="Remove" data-rm="${esc(f.name)}">&times;</button></span>`;
+        }).join("")
+      : `<span class="files-empty">Empty. Drop files or a folder here —
+         agents can only read what you add.</span>`;
+    box.querySelectorAll("[data-rm]").forEach(b =>
+      b.onclick = () => removeFile(b.dataset.rm));
+  } catch {
+    box.innerHTML = `<span class="files-empty">Could not read the files.</span>`;
+  }
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+
+async function uploadFiles(list) {
+  const url = filesUrl();
+  const note = $("files-note");
+  if (!url) {
+    note.textContent = mode === "build"
+      ? "Start describing the work first, then drop your files."
+      : "Pick a team first.";
+    return;
+  }
+  if (!list.length) return;
+
+  // One request for the whole drop, not one per file: a folder of fifty
+  // files should not be fifty round trips.
+  const body = new FormData();            // no Content-Type: the browser
+  for (const f of list) {                 // sets the multipart boundary
+    body.append("files", f);
+  }
+  for (const f of list) {
+    // webkitRelativePath carries the folder structure of a directory drop;
+    // it is empty for a plain file pick.
+    body.append("paths", f.webkitRelativePath || f.name);
+  }
+  note.textContent = list.length === 1
+    ? `adding ${list[0].name}…` : `adding ${list.length} files…`;
+  try {
+    const out = await (await api(url, { method: "POST", body })).json();
+    const saved = out.saved || [];
+    note.textContent = `added ${saved.length} file${saved.length === 1 ? "" : "s"}`;
+    setTimeout(resetFilesNote, 2500);
+    handed(saved);
+  } catch (e) {
+    note.textContent = e.message || "upload failed";
+  }
+  await loadFiles();
+}
+
+/* Files uploaded during an interview that never became a team. Without this
+   they sit on disk with nothing in the interface admitting they exist. */
+async function checkStranded() {
+  const bar = $("stranded");
+  try {
+    const s = await (await api("/api/staging")).json();
+    if (!s.count) { bar.hidden = true; return; }
+    const names = s.stranded.flatMap(x => x.files.map(f => f.name));
+    bar.hidden = false;
+    bar.innerHTML =
+      `${s.count} file${s.count === 1 ? "" : "s"} you added while describing `
+      + `the work (${names.slice(0, 3).map(esc).join(", ")}`
+      + `${names.length > 3 ? "…" : ""}) never reached a team. `
+      + `<button class="ghost" id="adopt-now">Move into this team</button>`;
+    $("adopt-now").onclick = async () => {
+      $("adopt-now").disabled = true;
+      try {
+        const out = await (await api(
+          `/api/teams/${activeTeam}/workspace/adopt`, { method: "POST" })).json();
+        bubble("system", `Moved ${out.moved.length} file(s) into the workspace: `
+                       + out.moved.join(", "));
+        bar.hidden = true;
+        await loadFiles();
+      } catch (e) {
+        bar.textContent = e.message || "Could not move those files.";
+      }
+    };
+  } catch { bar.hidden = true; }
+}
+
+/* Dropping a file is an act of handing it over, so it belongs in the
+   conversation rather than only in a folder listing. In Run mode the team
+   can read it immediately; in Build mode it is held for the team being
+   designed, and saying which is the difference between the feature working
+   and appearing not to. */
+function handed(saved) {
+  if (!saved.length) return;
+  const names = saved.map(f => f.name);
+  const shown = names.slice(0, 4).join(", ") + (names.length > 4
+    ? ` and ${names.length - 4} more` : "");
+
+  if (mode === "build") {
+    bubble("system", `Holding ${shown} for the team you are describing. `
+                   + `They move into its workspace when you press Create team.`);
+    return;
+  }
+
+  // A file that tries to talk to the agents is worth saying out loud, with
+  // the line quoted so the person can judge it rather than take our word.
+  const flagged = saved.filter(f => (f.warnings || []).length);
+  if (flagged.length) {
+    const worst = flagged.flatMap(f => f.warnings.map(x => ({ ...x, file: f.name })))
+      .sort((a, b) => (a.severity !== "high") - (b.severity !== "high"));
+    const w = worst[0];
+    bubble("system",
+      `Heads up — ${esc(w.file)} line ${w.line} ${esc(w.why)}: “${esc(w.quote)}”. `
+      + `Your agents are told to treat file contents as data and report lines `
+      + `like this rather than follow them, but check the file is what you expect`
+      + (worst.length > 1 ? ` (${worst.length} flagged passages in total).` : "."));
+  }
+
+  const images = saved.filter(f => f.kind === "image").length;
+  const pdfs = saved.filter(f => f.kind === "pdf").length;
+  let note = `Your team can now read ${shown} by name.`;
+  // Say the thing that would otherwise fail quietly at run time.
+  if (images) note += ` An agent needs the vision toolset to look at an image;`
+                    + ` open its brief to grant it.`;
+  if (pdfs) note += ` Reading a PDF needs the pdf skill.`;
+  bubble("system", note);
+
+  // Offer the obvious next sentence instead of making them compose it, but
+  // never overwrite something they were already typing.
+  const box = $("input");
+  if (!box.value.trim()) {
+    box.value = names.length === 1
+      ? `Read ${names[0]} and tell me what is in it.`
+      : `Read ${names.slice(0, 4).join(", ")} and tell me what they contain.`;
+    box.dispatchEvent(new Event("input"));
+    box.focus();
+    box.select();          // one keystroke replaces it if that is not the job
+  }
+}
+
+function resetFilesNote() {
+  $("files-note").textContent = mode === "build"
+    ? "held for the team you are about to create — press Create team to hand them over"
+    : "the only folder this team can reach";
+}
+
+/* Dropping onto the chat is the obvious gesture, so the whole left pane is
+   the target rather than a small zone inside it. */
+function wireDrops() {
+  const pane = $("chat-pane") || $("chat").parentElement;
+  if (!pane || pane.dataset.dropWired) return;
+  pane.dataset.dropWired = "1";
+
+  let depth = 0;                     // dragenter/leave fire per child element
+  pane.addEventListener("dragenter", (e) => {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault(); depth++; pane.classList.add("dropping");
+  });
+  pane.addEventListener("dragover", (e) => {
+    if ([...e.dataTransfer.types].includes("Files")) e.preventDefault();
+  });
+  pane.addEventListener("dragleave", () => {
+    if (--depth <= 0) { depth = 0; pane.classList.remove("dropping"); }
+  });
+  pane.addEventListener("drop", async (e) => {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault(); depth = 0; pane.classList.remove("dropping");
+    const files = await filesFromDrop(e.dataTransfer);
+    if (files.length) uploadFiles(files);
+  });
+
+  // Pasting a screenshot: the clipboard gives a nameless blob, so it is
+  // named here rather than arriving as "image.png" over and over.
+  $("input").addEventListener("paste", (e) => {
+    const imgs = [...(e.clipboardData?.items || [])]
+      .filter(i => i.type.startsWith("image/"))
+      .map(i => i.getAsFile())
+      .filter(Boolean);
+    if (!imgs.length) return;
+    e.preventDefault();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    uploadFiles(imgs.map((b, n) => new File(
+      [b], `pasted-${stamp}${imgs.length > 1 ? "-" + (n + 1) : ""}`
+           + "." + (b.type.split("/")[1] || "png"),
+      { type: b.type })));
+  });
+}
+
+/* A dropped folder arrives as directory entries, not files, so it has to be
+   walked. Without this a folder drop silently yields nothing. */
+async function filesFromDrop(dt) {
+  const items = [...(dt.items || [])];
+  const entries = items.map(i => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return [...(dt.files || [])];
+
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (out.length >= 200) return;        // a sane ceiling on one drop
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      // Mirror webkitRelativePath so the backend sees one shape either way.
+      Object.defineProperty(file, "webkitRelativePath",
+                            { value: prefix + entry.name });
+      out.push(file);
+      return;
+    }
+    if (entry.isDirectory) {
+      const reader = entry.createReader();
+      // readEntries returns at most 100 at a time: keep going until empty.
+      while (true) {
+        const batch = await new Promise((res, rej) =>
+          reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const child of batch) await walk(child, prefix + entry.name + "/");
+      }
+    }
+  };
+  for (const e of entries) await walk(e, "");
+  return out;
+}
+
+async function removeFile(name) {
+  try {
+    await api(`/api/teams/${activeTeam}/workspace/${encodeURIComponent(name)}`,
+              { method: "DELETE" });
+  } catch (e) {
+    $("files-note").textContent = e.message || "could not remove that file";
+  }
+  await loadFiles();
+}
+
+/* Several agents work at once now, so "who is active" is a set rather than a
+   single name: highlighting one used to un-highlight everyone else, which
+   during a parallel round meant the crew strip showed one worker busy and
+   its siblings idle. */
+const working = new Set();
+
+function paintCrew() {
+  document.querySelectorAll(".fig-wrap").forEach(el => {
+    const on = working.has(el.dataset.agent);
+    el.classList.toggle("active", on);
+    const f = el.querySelector(".figure");
+    if (f) { f.classList.toggle("talking", on); f.classList.toggle("idle", !on); }
+    // Never colour alone: say which state this is.
+    const w = el.querySelector(".state-word");
+    if (w) {
+      w.textContent = on ? "working"
+        : el.classList.contains("failed") ? "failed"
+        : el.classList.contains("done") ? "done" : "";
+    }
+  });
+}
+
+function crewActive(name) {
+  if (name === null) working.clear(); else working.add(name);
+  paintCrew();
+}
+
+function crewFinished(name, failed) {
+  working.delete(name);
+  document.querySelectorAll(`.fig-wrap[data-agent="${CSS.escape(name)}"]`)
+    .forEach(el => {
+      el.classList.add(failed ? "failed" : "done");
+    });
+  paintCrew();
+}
+
+/* ---------------------------------------------------------- the architect */
+function stage(state, line, hint) {
+  $("stage-fig").innerHTML = figure("architect", { lead: true, size: 52, state });
+  if (line !== undefined) $("stage-line").textContent = line;
+  $("stage-hint").innerHTML = hint || "";
+}
+
+function stageProgress() {
+  const f = (progress && progress.filled) || {};
+  const missing = (progress && progress.missing) || SLOTS;
+  $("stage-meter").innerHTML = SLOTS.map(s => {
+    const done = Object.prototype.hasOwnProperty.call(f, s) && !missing.includes(s);
+    return `<i class="${done ? "on" : ""}" title="${s}"></i>`;
+  }).join("");
+}
+
+
+
+/* ------------------------------------------------ agents saying things
+   Lines come from what actually happened, not invented chatter: an agent
+   says what it was asked to do, what it reached for, and what it came back
+   with. A bubble that made things up would be worse than no bubble. */
+function say(agentName, text, fault) {
+  const el = document.querySelector(`.fig-wrap[data-agent="${CSS.escape(agentName)}"]`);
+  if (!el) return;
+  el.querySelectorAll(".bubble").forEach(b => b.remove());
+  const b = document.createElement("div");
+  b.className = "bubble" + (fault ? " fault" : "");
+  b.textContent = text.length > 150 ? text.slice(0, 147).trimEnd() + "…" : text;
+  el.appendChild(b);
+  requestAnimationFrame(() => b.classList.add("show"));
+  clearTimeout(el._sayTimer);
+  el._sayTimer = setTimeout(() => {
+    b.classList.remove("show");
+    setTimeout(() => b.remove(), 250);
+  }, fault ? 9000 : 6000);
+}
+
+function speakEvent(ev) {
+  const first = (s, n) => (s || "").split("\n")[0].slice(0, n);
+  switch (ev.kind) {
+    case "delegate":    say(ev.to, first(ev.text, 150)); break;
+    case "manages":     say(ev.agent, `Bringing in ${first(ev.text, 90)}`); break;
+    case "tool_grant":  say(ev.agent, `Using ${first(ev.text, 90)}`); break;
+    case "tool_call":   say(ev.agent, first(ev.text, 120)); break;
+    case "agent_result":say(ev.agent, first(ev.text, 150)); break;
+    case "final":       say(ev.agent, first(ev.text, 150)); break;
+    case "error":       if (ev.agent) say(ev.agent, first(ev.text, 150), true); break;
+  }
+}
+
+/* ------------------------------------------------------- editing an agent */
+async function saveAgent(name, patch) {
+  const r = await api(`/api/teams/${activeTeam}/agents/${encodeURIComponent(name)}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const j = await r.json();
+  if (runSpec) {
+    const t = runSpec.main_agent.name === name
+      ? runSpec.main_agent
+      : (runSpec.sub_agents || []).find(a => a.name === name);
+    if (t) Object.assign(t, j.agent);
+  }
+  return j;
+}
+
+function wireEditor(a) {
+  const nick = document.getElementById("ed-nick");
+  const pers = document.getElementById("ed-pers");
+  const mem = document.getElementById("ed-mem");
+  const save = document.getElementById("ed-save");
+  const note = document.getElementById("ed-note");
+  if (!save) return;
+
+  save.onclick = async () => {
+    save.disabled = true; note.textContent = "Saving…";
+    try {
+      await saveAgent(a.name, {
+        nickname: nick.value.trim(),
+        personality: pers.value.trim(),
+        memory_enabled: mem.checked,
+      });
+      note.textContent = "Saved. Takes effect on the next run.";
+      if (runSpec) renderCrew(runSpec, null);
+      else if (spec) renderCrew(spec);
+    } catch (e) { note.textContent = e.message; }
+    finally { save.disabled = false; }
+  };
+
+  const del = document.getElementById("ed-delete");
+  const delNote = document.getElementById("ed-del-note");
+  if (del) {
+    let armed = false;
+    del.onclick = async () => {
+      // Two presses, not a modal: the second press is the confirmation, and
+      // the button says exactly what it will take with it.
+      if (!armed) {
+        armed = true;
+        del.textContent = `Really delete ${a.name}?`;
+        delNote.textContent = "Press again to confirm. Click elsewhere to cancel.";
+        setTimeout(() => {
+          armed = false;
+          del.textContent = "Delete this agent";
+          delNote.textContent = "Removes it and its memory. Cannot be undone.";
+        }, 5000);
+        return;
+      }
+      del.disabled = true;
+      delNote.textContent = "Deleting…";
+      try {
+        const r = await api(
+          `/api/teams/${activeTeam}/agents/${encodeURIComponent(a.name)}`,
+          { method: "DELETE" });
+        const out = await r.json();
+        // The chart may have been repaired around it; say so rather than
+        // letting the person find out on the next run.
+        bubble("system", `Deleted ${out.deleted}.`
+          + (out.changes && out.changes.length
+             ? " " + out.changes.join("; ") + "." : ""));
+        picked = null;
+        const fresh = await (await api(`/api/teams/${activeTeam}`)).json();
+        runSpec = fresh.spec || runSpec;
+        renderCrew(runSpec, null);
+        renderTrace();
+      } catch (e) {
+        delNote.textContent = e.message || "Could not delete that agent.";
+        del.disabled = false;
+      }
+    };
+  }
+
+  const memBox = document.getElementById("ed-memory");
+  const memSave = document.getElementById("ed-memory-save");
+  if (memBox && activeTeam) {
+    api(`/api/teams/${activeTeam}/agents/${encodeURIComponent(a.name)}/memory`)
+      .then(r => r.json())
+      .then(m => { memBox.value = m.content || "(nothing remembered yet)"; })
+      .catch(() => { memBox.value = "(could not read it)"; });
+    memSave.onclick = async () => {
+      memSave.disabled = true;
+      try {
+        await api(`/api/teams/${activeTeam}/agents/${encodeURIComponent(a.name)}/memory`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: memBox.value }),
+        });
+        note.textContent = "Memory saved.";
+      } catch (e) { note.textContent = e.message; }
+      finally { memSave.disabled = false; }
+    };
+  }
+}
+
+/* ------------------------------------------------- opening up an agent */
+let picked = null, runEvents = [], runStart = 0, runTimer = null, runBusy = false;
+
+function agentByName(sp, name) {
+  if (!sp) return null;
+  if (sp.main_agent && sp.main_agent.name === name)
+    return { ...sp.main_agent, role: "Runs the team", supervisor: true };
+  return (sp.sub_agents || []).find(a => a.name === name) || null;
+}
+
+function briefHtml(a) {
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
+  const grants = [...(a.toolsets || []), ...(a.skills || [])]
+    .map(t => `<span class="tool">${esc(t)}</span>`).join("") ||
+    `<span class="tag">none — it delegates</span>`;
+  return `<div class="brief">
+    <header>
+      ${figure(a.name, { lead: !!a.supervisor || (a.manages || []).length > 0, size: 44 })}
+      <div><h3>${esc(a.nickname || a.name)}</h3>
+        <div class="who-role">${a.nickname ? esc(a.name) + " · " : ""}${esc(a.role || "")}</div></div>
+      <button class="close" id="brief-close" title="Close">×</button>
+    </header>
+    <dl>
+      ${row("Can use", grants)}
+      ${row("Leads", (a.manages || []).map(esc).join(", "))}
+      ${row("Thinks", a.reasoning ? esc(a.reasoning) : "")}
+      ${row("Model", a.model_tier === "cheap" ? "cheap tier" : "capable")}
+      ${row("Expects", (a.inputs || []).map(esc).join(", "))}
+      ${row("Produces", (a.outputs || []).map(esc).join(", "))}
+    </dl>
+    ${a.system_prompt ? `<div class="say">${esc(a.system_prompt)}</div>` : ""}
+    ${activeTeam ? `
+    <div class="edit">
+      <label>Call it
+        <input id="ed-nick" value="${esc(a.nickname || "")}" placeholder="${esc(a.name)}" />
+      </label>
+      <label>Manner
+        <textarea id="ed-pers" placeholder="How it should come across — brisk, careful, plain-spoken. Not what it does.">${esc(a.personality || "")}</textarea>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="ed-mem" ${a.memory_enabled === false ? "" : "checked"} />
+        Keeps its own memory between runs
+      </label>
+      <label>What it remembers
+        <textarea class="memview" id="ed-memory" spellcheck="false"></textarea>
+      </label>
+      <div class="row">
+        <button class="ghost" id="ed-memory-save">Save memory</button>
+        <span class="grow" id="ed-note"></span>
+        <button class="primary" id="ed-save">Save agent</button>
+      </div>
+      <div class="row danger-row">
+        <button class="danger" id="ed-delete">Delete this agent</button>
+        <span class="grow" id="ed-del-note">Removes it and its memory. Cannot be undone.</span>
+      </div>
+    </div>` : ""}
+  </div>`;
+}
+
+let briefOpener = null;        // the figure to hand focus back to
+
+function pickAgent(name) {
+  const opening = picked !== name;
+  // Remember where the person was before the panel took focus, so closing
+  // puts them back on the figure rather than at the top of the document.
+  if (opening) {
+    briefOpener = document.querySelector(
+      `.fig-wrap[data-agent="${CSS.escape(name)}"]`);
+  }
+  picked = opening ? name : null;
+  document.querySelectorAll(".fig-wrap").forEach(el =>
+    el.classList.toggle("picked", el.dataset.agent === picked));
+  if (mode === "run") renderTrace();
+  else renderSpec();
+
+  const panel = document.querySelector(".brief");
+  if (picked && panel) {
+    trapFocus(panel);
+    (panel.querySelector("button, input, textarea") || panel).focus();
+  } else if (!picked && briefOpener) {
+    briefOpener.focus(); briefOpener = null;
+  }
+}
+
+/* While a panel is open, Tab cycles inside it. Without this the next Tab
+   lands on the trace behind the panel, which looks like the panel vanished. */
+function trapFocus(panel) {
+  panel.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const stops = [...panel.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter(el => !el.disabled && el.offsetParent !== null);
+    if (!stops.length) return;
+    const first = stops[0], last = stops[stops.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  });
+}
+
+function wireCrew() {
+  const crew = $("crew");
+  // Hovering one agent dims the hairlines, so the eye follows the figure
+  // rather than the scaffolding between them.
+  crew.onmouseover = (e) => {
+    if (e.target.closest(".fig-wrap")) crew.classList.add("focused");
+  };
+  crew.onmouseout = (e) => {
+    if (!e.relatedTarget || !crew.contains(e.relatedTarget))
+      crew.classList.remove("focused");
+  };
+  document.querySelectorAll(".fig-wrap").forEach(el => {
+    el.tabIndex = 0;
+    el.onclick = () => pickAgent(el.dataset.agent);
+    el.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickAgent(el.dataset.agent); }
+    };
+  });
+}
+
+/* the trace, filtered to whichever agent you opened */
+function runStatHtml() {
+  if (!runBusy) return "";
+  const s = Math.round((Date.now() - runStart) / 1000);
+  const agents = new Set(runEvents.filter(e => e.agent).map(e => e.agent)).size;
+  const last = runEvents.length ? runEvents[runEvents.length - 1] : null;
+  const doing = last ? `${last.kind}${last.agent ? " · " + last.agent : ""}` : "starting";
+  return `<div class="runstat ${s > 240 ? "over" : ""}"><span class="spin"></span>
+      ${s}s · ${runEvents.length} steps · ${agents} agents working · ${esc(doing)}</div>`;
+}
+
+function tickRunStat() {
+  const el = document.querySelector(".runstat");
+  if (el) el.outerHTML = runStatHtml();
+}
+
+/* Which kinds of event are hidden, and whether the trace follows the run.
+   Both are remembered: a person who turned off "thinking" once does not want
+   it back on the next run. */
+let hiddenKinds = new Set(prefs().hiddenKinds || []);
+let followTrace = prefs().follow !== false;        // on unless turned off
+
+const KIND_WORD = {
+  delegate: "handed to", thinking: "thinking", tool_call: "used a tool",
+  tool_result: "tool answered", agent_result: "answered", final: "final answer",
+  error: "failed", blocked: "blocked", reused: "reused", parallel: "in parallel",
+  resumed: "resumed", run_started: "started",
+};
+
+function renderFilters() {
+  const bar = $("tfilter");
+  const kinds = [...new Set(runEvents.map(e => e.kind))];
+  bar.hidden = kinds.length === 0;
+  if (bar.hidden) return;
+  bar.innerHTML = kinds.map(k => {
+    const on = !hiddenKinds.has(k);
+    return `<button data-kind="${esc(k)}" aria-pressed="${on}">`
+         + `${esc(KIND_WORD[k] || k)}</button>`;
+  }).join("")
+    + `<span class="grow"></span>`
+    + `<button class="follow" id="follow" aria-pressed="${followTrace}"`
+    + ` title="Scroll to each new step as it arrives">follow</button>`;
+
+  bar.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => {
+    const k = b.dataset.kind;
+    hiddenKinds.has(k) ? hiddenKinds.delete(k) : hiddenKinds.add(k);
+    savePref("hiddenKinds", [...hiddenKinds]);
+    renderTrace();
+  });
+  $("follow").onclick = () => {
+    followTrace = !followTrace;
+    savePref("follow", followTrace);
+    renderFilters();
+    if (followTrace) $("right").scrollTop = $("right").scrollHeight;
+  };
+}
+
+function renderTrace() {
+  const sp = runSpec || spec;
+  const a = picked && agentByName(sp, picked);
+  const box = $("right");
+  // Remember where the reader was, so a re-render does not yank the view.
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+
+  let shown = picked
+    ? runEvents.filter(e => e.agent === picked || e.to === picked)
+    : runEvents;
+  shown = shown.filter(e => !hiddenKinds.has(e.kind));
+
+  const head = picked
+    ? `<div class="filterbar">Showing ${shown.length} of ${runEvents.length} steps
+         <button id="clear-filter">Show every agent</button></div>`
+    : "";
+  box.innerHTML =
+    runStatHtml() + head +
+    (shown.map(evHtml).join("") ||
+     (runEvents.length
+       ? `<div class="empty">Every kind of step is hidden. Turn one back on above.</div>`
+       : `<div class="empty">Each delegation, tool call and result appears here as it happens.</div>`))
+    + (a ? briefHtml(a) : "");
+  renderFilters();
+  wireTraceRows();
+  wireBrief();
+  if (followTrace && nearBottom && !picked) box.scrollTop = box.scrollHeight;
+}
+
+const CLIP = 260;
+
+function evHtml(ev) {
+  const who = ev.kind === "delegate" ? `${ev.agent} → ${ev.to}`
+                                     : (ev.agent || ev.kind);
+  const text = ev.text || "";
+  const long = text.length > CLIP;
+  // Colour alone never carries the meaning: the kind is spelled out.
+  const body = long
+    ? `<span class="clip">${esc(text.slice(0, CLIP))}… `
+      + `<button class="more" type="button">show all</button></span>`
+      + `<span class="full">${esc(text)}</span>`
+    : esc(text);
+  return `<div class="ev ${ev.kind}" data-text="${esc(text)}">`
+       + `<button class="copy" type="button" aria-label="Copy this step">copy</button>`
+       + `<div class="k">${esc(KIND_WORD[ev.kind] || ev.kind)} · ${esc(who)}</div>`
+       + body + `</div>`;
+}
+
+function wireTraceRows() {
+  $("right").querySelectorAll(".ev").forEach(row => {
+    const more = row.querySelector(".more");
+    if (more) more.onclick = () => row.classList.add("open");
+    const copy = row.querySelector(".copy");
+    if (copy) copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(row.dataset.text || "");
+        copy.textContent = "copied";
+        setTimeout(() => { copy.textContent = "copy"; }, 1200);
+      } catch {
+        copy.textContent = "press Ctrl+C";
+      }
+    };
+  });
+}
+
+function wireBrief() {
+  const sp = runSpec || spec;
+  const a = picked && agentByName(sp, picked);
+  if (a) wireEditor(a);
+  const c = document.getElementById("brief-close");
+  if (c) c.onclick = () => pickAgent(picked);
+  const f = document.getElementById("clear-filter");
+  if (f) f.onclick = () => pickAgent(picked);
+}
+
+/* ---------------------------------------------------------------- status */
+async function loadStatus() {
+  try {
+    const s = await (await api("/api/status")).json();
+    if (s.username) $("whoami").textContent = s.username;
+    rememberAccount(s.username); renderAccountMenu();
+    $("tab-admin").style.display = s.is_admin ? "" : "none";
+    if (s.is_admin && mode === "admin") { /* refreshed by its own loader */ }
+    const rt = s.runtime;
+    $("d-rt").className = "dot " + (rt.ok ? "ok" : "bad");
+    const pace = rt.median_call_ms
+      ? ` · ${(rt.median_call_ms / 1000).toFixed(1)}s a turn` : "";
+    $("t-rt").textContent = rt.ok
+      ? `Hermes: ${rt.runtime}${rt.models?.length ? " · " + rt.models[0] : ""}${pace}`
+      : (rt.last_error ? `Hermes failing` : `Hermes unreachable`);
+    $("t-rt").title = rt.last_error || rt.error || "";
+    $("d-or").className = "dot " + (s.orchestrator.ok ? "ok" : "bad");
+    $("t-or").textContent = `manager: ${s.orchestrator.name}`;
+    fillTeams(s.teams || []);
+  } catch { $("t-rt").textContent = "backend unreachable"; }
+}
+
+function fillTeams(teams) {
+  const sel = $("teamsel");
+  sel.innerHTML = teams.length
+    ? teams.map(t => `<option value="${t.id}">${esc(t.name)} · ${esc(t.runtime)}</option>`).join("")
+    : `<option value="">no teams yet</option>`;
+  const had = activeTeam;
+  if (teams.length && !activeTeam) activeTeam = teams[0].id;
+  if (activeTeam) sel.value = activeTeam;
+  if (mode === "run" && activeTeam && activeTeam !== had) loadRunCrew();
+}
+
+/* ---------------------------------------------------------------- chat ui */
+function bubble(who, text, cls = "") {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerHTML = `<div class="who">${esc(who)}</div><div class="body">${esc(text)}</div>`;
+  $("chat").appendChild(d);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return d.querySelector(".body");
+}
+
+/* ---------------------------------------------------------------- build mode */
+async function newSession() {
+  const r = await jpost("/api/session", {});
+  sessionId = r.session_id; spec = null; issues = []; progress = null; built = null;
+  resetFilesNote(); loadFiles();   // a new session starts with an empty tray
+  justFilled = []; picked = null; runEvents = [];
+  renderCrew(null);
+  stage("idle", "Tell me what you want done.",
+        "I'll ask until the job is clear, then show you the team.");
+  stageProgress();
+  $("chat").innerHTML = "";
+  $("right").innerHTML = `<div class="empty">Describe the work on the left. The team takes shape here as the picture gets clearer.</div>`;
+  $("btn-create").disabled = true;
+  $("buildnote").textContent = "Nothing drafted yet.";
+  bubble("architect", "Tell me what you want done, in your own words. I'll ask until the job is clear, show you the team I'd build, and only create it once you say so.");
+}
+
+async function sendBuild(text) {
+  bubble("you", text, "me");
+  const ph = bubble("architect", "…");
+  stage("thinking", "Thinking that through…", "");
+  try {
+    const r = await jpost("/api/chat", { session_id: sessionId, message: text });
+    ph.textContent = r.reply || "(no reply)";
+    if (r.took_ms) {
+      const s = (r.took_ms / 1000).toFixed(1);
+      const n = document.createElement("div");
+      n.className = "took" + (r.took_ms > 15000 ? " slow" : "");
+      n.textContent = `${s}s`;
+      ph.appendChild(n);
+    }
+    issues = r.issues || [];
+    const before = new Set(Object.keys((progress && progress.filled) || {}));
+    progress = r.progress || progress;
+    justFilled = Object.keys((progress && progress.filled) || {})
+                       .filter(k => !before.has(k));
+    if (r.spec) { spec = r.spec; renderSpec(); renderCrew(spec); }
+    else renderInterview();
+    speakLastReply(r);
+    $("btn-create").disabled = !r.ready;
+    $("buildnote").textContent = r.spec
+      ? (r.ready ? "Team ready. Review it, then activate." : "Team drafted but has blocking problems.")
+      : "Still gathering requirements.";
+  } catch (e) {
+    ph.textContent = e.message;
+    stage("idle", "That didn't go through.", "The reason is in the message on the left.");
+  }
+}
+
+function speakLastReply(r) {
+  const missing = (progress && progress.missing) || [];
+  if (r.spec) {
+    stage("idle", "Here's the team I'd build.",
+          "Look it over on the right. <b>Create team</b> when you're happy.");
+  } else if (progress && progress.ready) {
+    stage("talking", "I have everything I need.",
+          "Say <b>confirm</b> and I'll draw up the team.");
+  } else if (missing.length) {
+    stage("talking", `Next: ${missing[0]}.`,
+          `${SLOTS.length - missing.length} of ${SLOTS.length} answered · still to cover <b>${missing.join(", ")}</b>`);
+  } else {
+    stage("talking");
+  }
+  stageProgress();
+}
+
+function slotsHtml() {
+  if (!progress) return "";
+  const f = progress.filled || {}, missing = progress.missing || [];
+  const rows = SLOTS.map(s => {
+    const done = Object.prototype.hasOwnProperty.call(f, s) && !missing.includes(s);
+    const fresh = justFilled.includes(s) ? " just-filled" : "";
+    return `<div class="slot ${done ? "done" : "todo"}${fresh}" data-slot="${s}"
+                 ${done ? 'title="Click to read the whole answer"' : ""}>
+      <span class="mark">${done ? "✓" : "○"}</span>
+      <span class="nm">${s}</span>
+      <span class="val">${done ? esc(f[s]) : "—"}</span></div>`;
+  }).join("");
+  const n = SLOTS.filter(s => Object.prototype.hasOwnProperty.call(f, s)
+                              && !(progress.missing||[]).includes(s)).length;
+  return `<div class="slots"><h3>Answered ${n} of ${SLOTS.length}</h3>${rows}</div>`;
+}
+
+function wireSlots() {
+  document.querySelectorAll(".slot.done").forEach(el =>
+    el.addEventListener("click", () => el.classList.toggle("open")));
+}
+
+function renderInterview() {
+  const iss = issues.map(i => `<div class="issue ${i.level}">${esc(i.message)}</div>`).join("");
+  const s = slotsHtml();
+  $("right-title").textContent = "What the job needs";
+  $("right-tag").textContent = progress && progress.ready ? "ready to build" : "gathering";
+  $("right").innerHTML = iss + s ||
+    `<div class="empty">Describe the work on the left. The team takes shape here as the picture gets clearer.</div>`;
+  wireSlots();
+  if (progress) {
+    const n = (progress.missing || []).length;
+    $("buildnote").textContent = progress.ready
+      ? "Everything answered. Confirm the plan on the left."
+      : `Still to answer: ${(progress.missing || []).join(", ") || "—"}`;
+  }
+}
+
+function renderSpec() {
+  $("right-title").textContent = spec.team_name;
+  $("right-tag").textContent = `${spec.sub_agents.length} sub-agents`;
+  const iss = issues.map(i => `<div class="issue ${i.level}">${esc(i.message)}</div>`).join("");
+  const builtBox = built ? `<div class="built">${esc(built.team_dir)}\n` +
+    (built.files || []).map(f => "  " + esc(f)).join("\n") + `</div>` : "";
+  const sup = `
+    <div class="card sup">
+      <h3>${esc(spec.main_agent.name)} <span class="tag">main</span></h3>
+      <div class="role">${esc(spec.main_agent.goal)}</div>
+      <details class="prompt"><summary>system prompt</summary>
+        <textarea data-path="main_agent.system_prompt">${esc(spec.main_agent.system_prompt)}</textarea>
+      </details>
+    </div>`;
+  const subs = spec.sub_agents.map((a, i) => `
+    <div class="card">
+      <h3>${esc(a.name)}</h3>
+      <div class="role">${esc(a.role)}</div>
+      <div>${(a.toolsets||[]).map(t => `<span class="tool">${esc(t)}</span>`).join("")
+            || '<span class="tag">no toolsets</span>'}${
+            (a.skills||[]).map(s => `<span class="tool" style="background:#2a2440;border-color:#413a60;color:#c9bbe8">${esc(s)}</span>`).join("")}${
+            a.reasoning ? `<span class="tag" style="margin-left:4px">${esc(a.reasoning)}</span>` : ""}</div>
+      <details class="prompt"><summary>system prompt</summary>
+        <textarea data-path="sub_agents.${i}.system_prompt">${esc(a.system_prompt)}</textarea>
+      </details>
+    </div>`).join("");
+  const rules = spec.handoff_rules.length ? `
+    <div class="card"><h3>handoffs</h3>${spec.handoff_rules.map(r =>
+      `<div class="role">${esc(r.from)} → ${esc(r.to)} — ${esc(r.when)}</div>`).join("")}</div>` : "";
+  const gaps = (spec.unsupported_requests || []).length ? `
+    <div class="issue warning">Not covered by available tools: ${spec.unsupported_requests.map(esc).join("; ")}</div>` : "";
+  const openBrief = picked ? briefHtml(agentByName(spec, picked) || {}) : "";
+  $("right").innerHTML = openBrief + builtBox + iss + gaps + slotsHtml() + sup + subs + rules;
+  wireSlots(); wireBrief();
+
+  $("right").querySelectorAll("textarea[data-path]").forEach(ta => {
+    ta.addEventListener("input", () => {
+      const p = ta.dataset.path.split(".");
+      if (p[0] === "main_agent") spec.main_agent.system_prompt = ta.value;
+      else spec.sub_agents[+p[1]].system_prompt = ta.value;
+    });
+  });
+}
+
+async function createTeam() {
+  $("btn-create").disabled = true;
+  $("buildnote").textContent = "Creating agents…";
+  try {
+    const r = await jpost(`/api/spec/${sessionId}/confirm`, { spec });
+    if (!r.created) {
+      issues = r.issues || []; renderSpec();
+      $("buildnote").textContent = "Blocked — fix the errors above.";
+      $("btn-create").disabled = false; return;
+    }
+    activeTeam = r.team_id;
+    built = r.built || null;
+    renderSpec();
+    renderCrew(spec);
+    stage("idle", `${spec.sub_agents.length + 1} agents are ready.`,
+          "Switch to <b>Run</b> and give them something to do.");
+    $("buildnote").textContent = built
+      ? `${spec.sub_agents.length + 1} agents written to ${built.team_dir}`
+      : `Created on ${r.runtime}.`;
+    await loadStatus();
+    setMode("run");
+    bubble("system", `Team "${spec.team_name}" is live. Talk to it below.`);
+  } catch (e) {
+    $("buildnote").textContent = "Create failed: " + e.message;
+    $("btn-create").disabled = false;
+  }
+}
+
+/* ---------------------------------------------------------------- run mode */
+async function sendRun(text) {
+  if (!activeTeam) { bubble("system", "No team selected."); return; }
+  bubble("you", text, "me");
+  return streamRun(`/api/teams/${activeTeam}/run`, { message: text });
+}
+
+/* One reader for both a fresh run and a resumed one: a retry streams exactly
+   the same events, minus the steps it inherited. */
+async function streamRun(url, body) {
+  const ph = bubble("team", "working…");
+  runEvents = []; runStart = Date.now(); runBusy = true;
+  working.clear();
+  document.querySelectorAll(".fig-wrap").forEach(el =>
+    el.classList.remove("done", "failed", "active"));
+  paintCrew();
+  clearInterval(runTimer);
+  runTimer = setInterval(tickRunStat, 1000);
+  renderTrace();
+  try {
+    const res = await api(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    });
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n"); buf = parts.pop();
+      for (const p of parts) {
+        const line = p.split("\n").find(l => l.startsWith("data: "));
+        if (!line) continue;
+        const ev = JSON.parse(line.slice(6));
+        speakEvent(ev);
+        if (ev.kind === "delegate" && ev.to) crewActive(ev.to);
+        if (ev.kind === "manages") crewActive(ev.agent);
+        if (ev.kind === "agent_result") crewFinished(ev.agent, false);
+        if (ev.kind === "error" && ev.agent) crewFinished(ev.agent, true);
+        if (ev.kind === "final") { ph.textContent = ev.text; crewActive(null); }
+        if (ev.kind === "error" && ph.textContent === "working…") ph.textContent = "Error: " + ev.text;
+        if (ev.kind === "run_started") {
+          lastRunId = ev.run_id;
+          runFailed = false;
+          $("runnote").textContent = "run " + ev.run_id;
+          $("btn-retry").style.display = "none";
+        }
+        if (ev.kind === "error") runFailed = true;
+        addEvent(ev);
+      }
+    }
+    if (ph.textContent === "working…") ph.textContent = "(no final answer returned)";
+  } catch (e) { ph.textContent = "Run failed: " + e.message; runFailed = true; }
+  finally {
+    runBusy = false;
+    // Finished work is banked, so a retry only re-runs what never completed.
+    if (runFailed && lastRunId) $("btn-retry").style.display = "";
+    clearInterval(runTimer);
+    tickRunStat();
+  }
+}
+
+function addEvent(ev) {
+  if (["run_started", "run_finished"].includes(ev.kind)) return;
+  runEvents.push(ev);
+  tickRunStat();
+  if (picked && ev.agent !== picked && ev.to !== picked) return;  // filtered out
+  $("right").insertAdjacentHTML("beforeend", evHtml(ev));
+  $("right").scrollTop = $("right").scrollHeight;
+}
+
+async function exportTeam() {
+  if (!activeTeam) return;
+  const t = await (await api(`/api/teams/${activeTeam}`)).json();
+  const blob = new Blob([JSON.stringify(t.spec, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `${t.name}.json`; a.click();
+}
+
+/* ---------------------------------------------------------------- modes */
+function setMode(m) {
+  mode = m;
+  savePref("mode", m);                       // come back where you left off
+  for (const [id, name] of [["tab-build", "build"], ["tab-run", "run"],
+                            ["tab-admin", "admin"]]) {
+    const on = m === name;
+    $(id).classList.toggle("on", on);
+    $(id).setAttribute("aria-selected", String(on));
+  }
+  $("buildbar").style.display = m === "build" ? "flex" : "none";
+  $("runbar").style.display = m === "run" ? "flex" : "none";
+  $("stage").style.display = m === "build" ? "flex" : "none";
+  $("crew").style.display = m === "admin" ? "none" : "flex";
+  $("files").style.display = (m === "admin") ? "none" : "block";
+  $("tfilter").hidden = m !== "run";
+  if (m === "admin") { loadAdmin(); return; }
+  $("left-title").textContent = m === "build" ? "Describe the work" : "Talk to your team";
+  $("right-title").textContent = m === "build" ? "The team" : "Live trace";
+  $("input").placeholder = m === "build"
+    ? "Describe the work in your own words" : "Give your team something to do";
+  if (m === "run") {
+    $("right").innerHTML = `<div class="empty">Each delegation, tool call and result appears here as it happens.</div>`;
+    $("chat").innerHTML = "";
+    bubble("system", "Your team is listening.");
+    picked = null; runEvents = [];
+    loadRunCrew();
+  }
+  resetFilesNote();
+  loadFiles();
+}
+
+/* ---------------------------------------------------------------- wiring */
+$("composer").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("input").value.trim();
+  if (!text || busy) return;
+  $("input").value = "";
+  $("input").style.height = "auto";
+  busy = true; $("send").disabled = true;
+  try {
+    mode === "build" ? await sendBuild(text) : await sendRun(text);
+  } catch (err) {
+    // The message is already on screen, so the failure is attached to it
+    // with a way to try again rather than replacing it with an error.
+    failedSend(text, err);
+  } finally {
+    busy = false; $("send").disabled = false; $("input").focus();
+  }
+});
+
+function failedSend(text, err) {
+  const row = bubble("system",
+    (err && err.message) || "That did not reach the server.");
+  const again = document.createElement("button");
+  again.className = "ghost"; again.textContent = "Try again";
+  again.style.marginLeft = "8px";
+  again.onclick = () => {
+    again.disabled = true;
+    $("input").value = text;
+    $("composer").requestSubmit();
+  };
+  row.appendChild(again);
+}
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("composer").requestSubmit(); }
+});
+$("input").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 140) + "px";
+});
+/* The runs table sorts and filters in the page. It is a report, not a
+   dashboard, so this is plain column sorting rather than anything clever. */
+function wireAdminTable() {
+  const table = $("adm-runs"), q = $("adm-q");
+  if (!table) return;
+  const rows = () => [...table.querySelectorAll("tr")].slice(1);
+
+  if (q) q.oninput = () => {
+    const needle = q.value.trim().toLowerCase();
+    rows().forEach(r => {
+      r.style.display = !needle || r.textContent.toLowerCase().includes(needle)
+        ? "" : "none";
+    });
+  };
+
+  let lastCol = -1, asc = true;
+  table.querySelectorAll("th[data-col]").forEach(th => {
+    const sort = () => {
+      const col = +th.dataset.col;
+      asc = col === lastCol ? !asc : true;
+      lastCol = col;
+      const sorted = rows().sort((x, y) => {
+        const a = x.cells[col]?.textContent.trim() || "";
+        const b = y.cells[col]?.textContent.trim() || "";
+        // numeric where both sides are numbers, text otherwise
+        const na = parseFloat(a), nb = parseFloat(b);
+        const cmp = (!isNaN(na) && !isNaN(nb) && /^[\d.]+$/.test(a)
+                     && /^[\d.]+$/.test(b))
+          ? na - nb : a.localeCompare(b, undefined, { numeric: true });
+        return asc ? cmp : -cmp;
+      });
+      sorted.forEach(r => table.appendChild(r));
+      table.querySelectorAll("th").forEach(h =>
+        h.setAttribute("aria-sort", "none"));
+      th.setAttribute("aria-sort", asc ? "ascending" : "descending");
+    };
+    th.onclick = sort;
+    th.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sort(); }
+    };
+  });
+}
+
+function ago(ts) {
+  if (!ts) return "—";
+  const s = Math.max(0, Date.now()/1000 - ts);
+  if (s < 60) return Math.floor(s) + "s ago";
+  if (s < 3600) return Math.floor(s/60) + "m ago";
+  if (s < 86400) return Math.floor(s/3600) + "h ago";
+  return Math.floor(s/86400) + "d ago";
+}
+
+async function loadAdmin() {
+  $("left-title").textContent = "This instance";
+  $("right-title").textContent = "Every team";
+  $("right-tag").textContent = "";
+  try {
+    const a = await (await api("/api/admin/overview")).json();
+    const s = a.stats;
+    $("chat").innerHTML = `
+      <div class="kpis">
+        <div class="kpi"><div class="n">${s.users}</div><div class="l">users</div></div>
+        <div class="kpi"><div class="n">${s.teams}</div><div class="l">teams</div></div>
+        <div class="kpi"><div class="n">${s.runs}</div><div class="l">runs</div></div>
+        <div class="kpi live"><div class="n">${s.running_now}</div><div class="l">running now</div></div>
+        <div class="kpi"><div class="n">${s.runs_24h}</div><div class="l">runs 24h</div></div>
+      </div>
+      ${(a.lockouts || []).length ? `
+      <h4 class="admh">Locked out now</h4>
+      <table class="adm"><tr><th>what</th><th>kind</th><th>failed tries</th>
+        <th>unlocks in</th></tr>
+      ${a.lockouts.map(l => `<tr><td>${esc(l.bucket)}</td><td>${esc(l.kind)}</td>
+        <td>${l.fails}</td><td>${Math.ceil(l.seconds_left / 60)} min</td></tr>`)
+        .join("")}</table>` : ""}
+      <h4 class="admh">Users</h4>
+      <table class="adm"><tr><th>user</th><th>role</th><th>teams</th><th>runs</th><th>last seen</th></tr>
+      ${a.users.map(u => `<tr><td>${esc(u.username)}</td>
+        <td>${u.is_admin ? "admin" : "user"}</td><td>${u.teams}</td>
+        <td>${u.runs}</td><td>${ago(u.last_login)}</td></tr>`).join("")}</table>
+      <h4 class="admh">Recent runs
+        <input id="adm-q" class="adm-q" type="search" placeholder="filter runs"
+               aria-label="Filter runs">
+      </h4>
+      <table class="adm" id="adm-runs"><tr>
+        ${["when","user","team","status","agents","request"]
+          .map((h, i) => `<th data-col="${i}" tabindex="0" role="button"
+               aria-label="Sort by ${h}">${h}</th>`).join("")}</tr>
+      ${a.runs.map(r => `<tr><td>${ago(r.created)}</td><td>${esc(r.owner||"—")}</td>
+        <td>${esc(r.team||"—")}</td>
+        <td><span class="pill-s ${esc(r.status||"done")}">${esc(r.status||"done")}</span></td>
+        <td>${r.agent_calls||0}</td><td>${esc((r.message||"").slice(0,70))}</td></tr>`).join("")
+        || `<tr><td colspan="6" style="color:var(--faint)">no runs yet</td></tr>`}</table>`;
+
+    wireAdminTable();
+    $("right").innerHTML = a.teams.map(t => `
+      <div class="card">
+        <h3>${esc(t.name)} <span class="tag">${esc(t.owner||"—")}</span></h3>
+        <div class="role">${t.agents.length} agents · ${t.runs} runs · created ${ago(t.created)}
+          ${t.last_run ? " · last run " + ago(t.last_run) : ""}</div>
+        ${t.agents.map(ag => `<div style="margin-top:6px">
+            <strong style="font-size:13px">${esc(ag.name)}</strong>
+            <span class="role">${esc(ag.role||"")}</span><br>
+            ${(ag.toolsets||[]).map(x=>`<span class="tool">${esc(x)}</span>`).join("")}
+            ${(ag.skills||[]).map(x=>`<span class="tool" style="background:#2a2440;border-color:#413a60;color:#c9bbe8">${esc(x)}</span>`).join("")}
+            ${ag.reasoning?`<span class="tag">${esc(ag.reasoning)}</span>`:""}
+          </div>`).join("")}
+      </div>`).join("") || `<div class="empty">No teams on this instance yet.</div>`;
+
+    const m = a.mirror;
+    $("buildnote").textContent = m.enabled
+      ? `Multica mirror: ${m.cli_found ? "on" : "CLI not found"} · sent ${m.sent}${m.last_error ? " · " + m.last_error : ""}`
+      : "Multica mirror off — this view is complete without it.";
+    $("buildbar").style.display = "flex";
+    $("btn-create").style.display = "none";
+    $("btn-reset").style.display = "none";
+  } catch (e) {
+    $("chat").innerHTML = `<div class="issue error">${esc(e.message)}</div>`;
+  }
+}
+
+$("tab-admin").onclick = () => setMode("admin");
+$("tab-build").onclick = () => {
+  $("btn-create").style.display = ""; $("btn-reset").style.display = "";
+  setMode("build"); newSession();
+};
+$("tab-run").onclick = () => setMode("run");
+$("btn-create").onclick = createTeam;
+$("btn-reset").onclick = newSession;
+$("btn-export").onclick = exportTeam;
+let armedTeam = null;
+$("btn-del-team").onclick = async () => {
+  if (!activeTeam || runBusy) return;
+  const b = $("btn-del-team");
+  const name = $("teamsel").selectedOptions[0]?.textContent || "this team";
+  // Armed per team: switching teams cancels it, so a confirm cannot carry
+  // over to a team the person did not mean to delete.
+  if (armedTeam !== activeTeam) {
+    armedTeam = activeTeam;
+    b.textContent = "Delete everything?";
+    b.title = `Removes ${name}, its agents, their memories, its workspace `
+            + `files and its run history. Cannot be undone.`;
+    setTimeout(() => {
+      if (armedTeam === activeTeam) { armedTeam = null; b.textContent = "Delete team"; }
+    }, 5000);
+    return;
+  }
+  b.disabled = true; b.textContent = "Deleting…";
+  try {
+    const out = await (await api(`/api/teams/${activeTeam}`,
+                                 { method: "DELETE" })).json();
+    bubble("system", `Deleted ${out.deleted}: its agents, their memories, `
+      + `its workspace and ${out.runs || 0} run(s) of history.`);
+    activeTeam = null; runSpec = null; picked = null;
+    working.clear();
+    await loadStatus();   // refills the selector and picks a remaining team
+    renderTrace();
+    loadFiles();
+  } catch (e) {
+    bubble("system", e.message || "Could not delete that team.");
+  } finally {
+    armedTeam = null; b.disabled = false; b.textContent = "Delete team";
+  }
+};
+
+$("btn-retry").onclick = () => {
+  if (!lastRunId || runBusy) return;
+  bubble("you", "Retry what failed");
+  streamRun(`/api/runs/${lastRunId}/resume`, null);
+};
+
+$("teamsel").onchange = (e) => {
+  activeTeam = e.target.value;
+  $("chat").innerHTML = "";
+  bubble("system", "Your team is listening.");
+  loadRunCrew();
+  loadFiles();          // each team sees only its own folder
+  armedTeam = null;
+  $("btn-del-team").textContent = "Delete team";
+};
+
+for (const id of ["upl", "upl-dir"]) {
+  $(id).onchange = (e) => {
+    if (e.target.files.length) uploadFiles([...e.target.files]);
+    e.target.value = "";  // so the same pick can be repeated after a removal
+  };
+}
+wireDrops();
+wireSplit();
+// Settle on one of the two at startup and remember it, so the segmented
+// control always has exactly one pressed button.
+(() => {
+  const choice = currentTheme();
+  if (!prefs().theme) savePref("theme", choice);
+  applyTheme(choice);
+  renderAccountMenu();     // paint the rail and the segment before first use
+})();
+
+$("rail-acct").onclick = () => {
+  renderAccountMenu();
+  togglePop($("acct-menu"), $("rail-acct"), "right");
+};
+$("acct-out").onclick = doSignOut;
+
+/* How many places this account is open. Shown rather than hidden behind a
+   settings page: an extra session is the first sign of a stolen password. */
+async function refreshSessions() {
+  const label = $("sess-label"), btn = $("acct-revoke");
+  if (!($("whoami") || {}).textContent) {
+    label.textContent = ""; btn.style.display = "none"; return;
+  }
+  try {
+    const { sessions } = await (await api("/api/auth/sessions")).json();
+    const n = sessions.length;
+    label.textContent = n === 1
+      ? "Signed in on this device only"
+      : `Signed in on ${n} devices`;
+    btn.style.display = n > 1 ? "" : "none";
+  } catch {
+    label.textContent = ""; btn.style.display = "none";
+  }
+}
+
+$("acct-revoke").onclick = async () => {
+  try {
+    const out = await (await api("/api/auth/sessions/revoke",
+                                 { method: "POST" })).json();
+    bubble("system", `Signed out of ${out.revoked} other session(s). `
+                   + `This one is still open.`);
+  } catch (e) {
+    bubble("system", e.message || "Could not sign the others out.");
+  }
+  closePop();
+  refreshSessions();
+};
+$("acct-add").onclick = () => switchTo("");
+
+$("theme-seg").querySelectorAll("[data-theme]").forEach(b => b.onclick = () => {
+  savePref("theme", b.dataset.theme);
+  applyTheme(b.dataset.theme);
+  renderAccountMenu();
+});
+
+/* One button for both kinds of upload, beside the message box. */
+$("attach").onclick = () => togglePop($("attach-menu"), $("attach"), "above");
+$("attach-files").onclick  = () => { closePop(); $("upl").click(); };
+$("attach-folder").onclick = () => { closePop(); $("upl-dir").click(); };
+/* ===== popovers =========================================================
+   Anchored to the control that opened them, closed by Esc, by clicking away,
+   and by opening the other one. Position is computed rather than absolute in
+   CSS so the menu stays on screen next to a rail button at any height. */
+let openPop = null;
+
+function placePop(pop, anchor, side) {
+  const a = anchor.getBoundingClientRect();
+  pop.hidden = false;                       // measure only once it is laid out
+  const box = pop.getBoundingClientRect();
+  let top, left;
+  if (side === "right") {                   // rail: beside the button
+    left = a.right + 8;
+    top = Math.min(a.top, window.innerHeight - box.height - 8);
+  } else {                                  // composer: above the button
+    left = Math.min(a.left, window.innerWidth - box.width - 8);
+    top = a.top - box.height - 8;
+  }
+  pop.style.left = Math.max(8, left) + "px";
+  pop.style.top = Math.max(8, top) + "px";
+}
+
+function togglePop(pop, anchor, side) {
+  const show = pop.hidden;
+  closePop();
+  if (!show) return;
+  placePop(pop, anchor, side);
+  anchor.setAttribute("aria-expanded", "true");
+  openPop = { pop, anchor };
+  (pop.querySelector("button") || pop).focus();
+}
+
+function closePop() {
+  if (!openPop) return;
+  openPop.pop.hidden = true;
+  openPop.anchor.setAttribute("aria-expanded", "false");
+  openPop = null;
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (!openPop) return;
+  if (!openPop.pop.contains(e.target) && !openPop.anchor.contains(e.target))
+    closePop();
+});
+window.addEventListener("resize", closePop);
+
+/* ===== accounts =========================================================
+   Only usernames are remembered, never a password or a token: this is a
+   convenience for typing, not a second place to be signed in from. */
+function knownAccounts() { return prefs().accounts || []; }
+
+function rememberAccount(name) {
+  if (!name) return;
+  const list = [name, ...knownAccounts().filter(n => n !== name)].slice(0, 5);
+  savePref("accounts", list);
+}
+
+function renderAccountMenu() {
+  const me = ($("whoami") && $("whoami").textContent.trim()) || "";
+  $("acct-name").textContent = me || "Not signed in";
+  $("rail-initial").textContent = me ? me[0].toUpperCase() : "·";
+  $("rail-acct").setAttribute("aria-label",
+    me ? `Account: ${me}` : "Account and appearance");
+
+  const others = knownAccounts().filter(n => n !== me);
+  $("acct-switch-label").style.display = others.length ? "" : "none";
+  $("acct-list").innerHTML = others.map(n =>
+    `<button class="row" type="button" role="menuitem" data-user="${esc(n)}">
+       <span class="u">${esc(n)}</span><span class="m">switch</span>
+     </button>`).join("");
+  $("acct-list").querySelectorAll("[data-user]").forEach(b =>
+    b.onclick = () => switchTo(b.dataset.user));
+
+  const choice = currentTheme();
+  $("theme-seg").querySelectorAll("[data-theme]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.theme === choice)));
+  refreshSessions();
+}
+
+/* Switching is signing out and coming back as someone else: there is no
+   second session to keep warm, so say so by doing exactly that, with the
+   name already filled in. */
+async function switchTo(name) {
+  closePop();
+  try {
+    await fetch(`${API}/api/auth/logout`,
+                { method: "POST", credentials: "same-origin" });
+  } catch { /* already signed out is not a failure */ }
+  sessionId = null; activeTeam = null; spec = null;
+  $("chat").innerHTML = ""; $("whoami").textContent = "";
+  renderAccountMenu();
+  showGate("login");
+  const user = $("au-user");
+  if (user) { user.value = name; }
+  const pass = $("au-pass");
+  if (pass) { pass.value = ""; pass.focus(); }
+  const err = $("au-err");
+  if (err) err.textContent = `Signing in as ${name}. Enter the password.`;
+}
+
+/* ===== keyboard =========================================================
+   The rule throughout: a shortcut never fires while the person is typing,
+   except the ones that belong to the composer itself. */
+function typing(el) {
+  return el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT"
+                || el.isContentEditable);
+}
+
+document.addEventListener("keydown", (e) => {
+  const el = document.activeElement;
+
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault(); $("input").focus(); return;
+  }
+  if (e.key === "Escape") {
+    if (openPop) { const a = openPop.anchor; closePop(); a.focus(); return; }
+    if (!$("keys").hidden) { $("keys").hidden = true; return; }
+    if (picked) { pickAgent(picked); return; }     // closes the brief
+    disarmAll();
+    return;
+  }
+  if (typing(el)) return;                          // everything below is global
+
+  if (e.key === "?") { e.preventDefault(); $("keys").hidden = !$("keys").hidden; }
+  else if (e.key === "1") setMode("build");
+  else if (e.key === "2") setMode("run");
+  else if (e.key === "3" && $("tab-admin").style.display !== "none") setMode("admin");
+});
+
+$("keys-close").onclick = () => { $("keys").hidden = true; };
+
+// Under 900px the right column is a section you can fold away to read.
+$("right-head").onclick = () => {
+  if (matchMedia("(max-width: 900px)").matches)
+    $("right-pane").classList.toggle("collapsed");
+};
+
+/* Sign-in validates when a field is left, not on every keystroke: telling
+   someone their password is too short while they are still typing it is
+   noise, not help. */
+function wireAuthValidation() {
+  const user = $("au-user"), pass = $("au-pass"), err = $("au-err");
+  if (!user || !pass) return;
+  const problem = () => {
+    if (user.value.trim().length < 3) return "Usernames are at least 3 characters.";
+    if (pass.value.length < 10) return "Passwords are at least 10 characters.";
+    return "";
+  };
+  const check = () => {
+    const p = problem();
+    const btn = $("au-go");
+    if (btn) btn.disabled = !!p;
+    return p;
+  };
+  for (const el of [user, pass]) {
+    el.addEventListener("blur", () => {
+      const p = check();
+      if (p && el.value) err.textContent = p;
+    });
+    el.addEventListener("input", () => {
+      check();
+      if (err.textContent) err.textContent = "";   // clear once they act
+    });
+  }
+  check();
+}
+wireAuthValidation();
+
+// Come back to the mode you left, but never to Admin without the right.
+(() => {
+  const want = prefs().mode;
+  if (want === "run" || (want === "admin"
+      && $("tab-admin").style.display !== "none")) {
+    // deferred: the tabs are only meaningful once the session is known
+    setTimeout(() => { if (sessionId || activeTeam) setMode(want); }, 400);
+  }
+})();
+
+/* Every armed destructive button goes back to sleep together: on Esc, and
+   whenever focus leaves it. An armed delete that stays armed is a trap. */
+function disarmAll() {
+  const team = $("btn-del-team");
+  if (team && team.textContent !== "Delete team") {
+    armedTeam = null; team.textContent = "Delete team";
+  }
+  const agent = document.getElementById("ed-delete");
+  if (agent && agent.textContent !== "Delete this agent") {
+    agent.textContent = "Delete this agent";
+    agent.dispatchEvent(new CustomEvent("disarm"));
+  }
+}
+document.addEventListener("focusin", (e) => {
+  if (e.target.id !== "btn-del-team" && e.target.id !== "ed-delete") disarmAll();
+});
+
+$("mic").onclick = toggleRecording;
+// Say up front if dictation is not installed, instead of on first press.
+micSupported().then(s => {
+  if (!s.available) {
+    $("mic").classList.add("off");
+    micLabel(s.install || "Voice input is not set up");
+  } else {
+    micLabel(`Record a message (${s.model} model, runs on this machine)`);
+  }
+});
+
+
+/* -------------------------------------------------- the doorkeeper
+   Eyes follow the cursor. It covers them while a password is being typed,
+   and peeks only when you choose to reveal it — so what it can "see"
+   matches what is actually on screen. */
+(function keeper() {
+  const svg = document.getElementById("keeper");
+  if (!svg) return;
+  const pupils = svg.querySelectorAll(".k-pupil");
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EYES = [{ x: 66, y: 54 }, { x: 94, y: 54 }];
+  const REACH = 3.4;                       // how far a pupil may travel
+
+  function look(clientX, clientY) {
+    if (still) return;
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    pupils.forEach((p, i) => {
+      // map the eye's own centre into page space, then aim at the cursor
+      const cx = r.left + (EYES[i].x / 160) * r.width;
+      const cy = r.top + (EYES[i].y / 136) * r.height;
+      const dx = clientX - cx, dy = clientY - cy;
+      const d = Math.hypot(dx, dy) || 1;
+      const k = Math.min(1, d / 220) * REACH;
+      p.style.transform = `translate(${(dx / d) * k}px, ${(dy / d) * k}px)`;
+    });
+  }
+
+  window.addEventListener("mousemove", e => look(e.clientX, e.clientY));
+  window.addEventListener("touchmove", e => {
+    if (e.touches[0]) look(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+
+  // an occasional blink, only while it is watching
+  if (!still) setInterval(() => {
+    if (svg.classList.contains("covering")) return;
+    svg.classList.add("blinking");
+    setTimeout(() => svg.classList.remove("blinking"), 150);
+  }, 5200);
+
+  const pass = document.getElementById("au-pass");
+  const peek = document.getElementById("au-peek");
+
+  function refresh() {
+    const hidden = pass.type === "password";
+    const busy = document.activeElement === pass || pass.value.length > 0;
+    svg.classList.toggle("covering", hidden && busy);
+  }
+
+  ["focus", "blur", "input"].forEach(ev => pass.addEventListener(ev, refresh));
+  document.getElementById("au-user").addEventListener("focus", refresh);
+
+  peek.addEventListener("click", () => {
+    const show = pass.type === "password";
+    pass.type = show ? "text" : "password";
+    peek.setAttribute("aria-pressed", String(show));
+    peek.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    peek.title = show ? "Hide password" : "Show password";
+    refresh();
+    pass.focus();
+  });
+
+  // starting a fresh sign-in should not leave the password exposed
+  window.resetPeek = () => {
+    pass.type = "password";
+    peek.setAttribute("aria-pressed", "false");
+    peek.setAttribute("aria-label", "Show password");
+    refresh();
+  };
+  refresh();
+})();
+
+$("authform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const u = $("au-user").value.trim(), pw = $("au-pass").value;
+  if (!u || !pw) { $("au-err").textContent = "Both fields are required."; return; }
+  $("au-go").disabled = true; $("au-err").textContent = "";
+  try {
+    const path = authMode === "signup" ? "/api/auth/signup" : "/api/auth/login";
+    const r = await fetch(API + path, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: pw }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { $("au-err").textContent = j.detail || "Could not sign in."; return; }
+    $("au-pass").value = "";
+    $("whoami").textContent = j.username;
+    rememberAccount(j.username); renderAccountMenu();
+    hideGate();
+    await start();
+  } catch (err) { $("au-err").textContent = err.message; }
+  finally { $("au-go").disabled = false; }
+});
+$("au-swap").onclick = (e) => { e.preventDefault(); authMode = authMode === "signup" ? "login" : "signup"; renderAuthMode(); };
+async function doSignOut() {
+  closePop();
+  await fetch(`${API}/api/auth/logout`,
+              { method: "POST", credentials: "same-origin" });
+  sessionId = null; activeTeam = null; spec = null; progress = null; built = null;
+  $("chat").innerHTML = ""; $("whoami").textContent = "";
+  renderAccountMenu();
+  showGate("login");
+}
+
+async function start() {
+  await loadStatus();
+  await newSession();
+}
+
+(async () => {
+  if (await checkAuth()) await start();
+  setInterval(() => { if (!$("gate").classList.contains("hidden")) return; loadStatus(); }, 20000);
+})();
+</script>
+</body>
+</html>

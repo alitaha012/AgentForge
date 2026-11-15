@@ -1,0 +1,12 @@
+# Optional: voice input (speak instead of typing).
+#
+#   pip install --default-timeout=120 --retries 10 -r requirements-voice.txt
+#
+# Use those flags: this pulls ctranslate2, a large wheel, and pip's default
+# 15-second timeout gives up partway on a slow link with a ReadTimeoutError.
+#
+# Kept out of requirements.txt deliberately. It is well over 100MB and the
+# app is fully usable without it — the microphone button simply tells you
+# this command. The first recording downloads a small model once (~75MB);
+# everything after that runs locally and your voice never leaves the machine.
+faster-whisper>=1.0

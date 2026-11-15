@@ -1,0 +1,20 @@
+# never commit: holds the server key
+.secrets/
+# never commit: holds password hashes and session tokens
+*.db
+*.db-shm
+*.db-wal
+# created agents (per-user); keep local
+teams/
+.env
+# .env alone does not match .env.bak-0721 or .env.local — these do
+.env.*
+!.env.example
+.venv/
+__pycache__/
+# staging files for the Multica mirror
+.multica-outbox/
+# stale snapshots and Windows folder metadata
+Claude outputs/
+desktop.ini
+*.tar.gz

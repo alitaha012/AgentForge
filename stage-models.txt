@@ -1,0 +1,26 @@
+# ---- per-stage models (append to .env) -------------------------------
+# Keep .env out of git. Verify the tags with the command in MODELS.md
+# before trusting them; a tag your account cannot serve fails at runtime.
+
+# Ollama's OpenAI-compatible endpoint, reached through your local daemon.
+HERMES_PROXY_BASE_URL=http://127.0.0.1:11434
+HERMES_PROXY_API_KEY=
+
+# Rotate this key at ollama.com/settings/keys: it was pasted into a chat,
+# so treat it as public. Replace the value on this line afterwards.
+OLLAMA_API_KEY=            # <-- paste your ROTATED key here
+
+# One model per stage. Unset falls back to HERMES_PROXY_MODEL.
+HERMES_PROXY_MODEL=gpt-oss:120b-cloud
+HERMES_MODEL_INTERVIEW=gpt-oss:20b-cloud
+HERMES_MODEL_DESIGN=gpt-oss:120b-cloud
+HERMES_MODEL_SUPERVISOR=gpt-oss:120b-cloud
+
+# Workers keep their own tier. The capable tier stays on Claude.
+HERMES_CHEAP_MODEL=gpt-oss:120b-cloud
+HERMES_CHEAP_PROVIDER=ollama-cloud
+
+# ---- verify the tags before relying on them --------------------------
+#   ollama list
+#   curl -s https://ollama.com/v1/models -H "Authorization: Bearer $env:OLLAMA_API_KEY"
+# A tag your account cannot serve fails at the first call, not at startup.
